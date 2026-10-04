@@ -570,10 +570,24 @@ render_fragment() {
 # operator's haproxy.cfg untouched.
 strip_managed_block() {
   local file=$1
+  # Strip every *complete* begin/end pair, and nothing else:
+  #  * an unpaired begin marker must not swallow the rest of the config, so
+  #    the lines it opens are emitted when no end marker follows;
+  #  * operator lines sitting between two separate managed blocks are kept.
   awk -v b="$HAPROXY_BEGIN" -v e="$HAPROXY_END" '
-    $0 == b { skip = 1; next }
-    $0 == e { skip = 0; next }
-    !skip   { print }
+    { lines[NR] = $0 }
+    END {
+      i = 1
+      while (i <= NR) {
+        if (lines[i] == b) {
+          j = i + 1
+          while (j <= NR && lines[j] != e) j++
+          if (j <= NR) { i = j + 1; continue }   # complete pair: drop it
+        }
+        print lines[i]
+        i++
+      }
+    }
   ' "$file"
 }
 
@@ -876,6 +890,7 @@ menu_authorize_key() {
 
   while :; do
     prompt_read key "Paste the foreign server's PUBLIC key (or 'q' to finish)"
+    prompt_exhausted "Paste the foreign server's PUBLIC key (or 'q' to finish)"
     [[ -z $key ]] && continue
     if [[ ${key,,} == q ]]; then break; fi
     key=${key#"${key%%[![:space:]]*}"}
@@ -1206,7 +1221,7 @@ show_foreign_status() {
   info "Foreign #$idx"
   if ! state_valid "$idx"; then
     warn "  state file is missing or invalid: $(state_file "$idx")"
-    info "  Overall: %sUNKNOWN%s" "$C_YELLOW" "$C_RESET"
+    printf '  Overall: %sUNKNOWN%s\n' "$C_YELLOW" "$C_RESET"
     return 1
   fi
 

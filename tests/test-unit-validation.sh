@@ -243,6 +243,58 @@ assert_eq "$(eval_in_script '' 'if state_valid 3; then echo valid; else echo inv
   "truncated state file is invalid"
 rm -f "$STATE/foreign-3.env"
 
+t_start "strip_managed_block only removes a complete marker pair"
+{
+  printf 'global\n    maxconn 1\n'
+  printf '%s\n' '# >>> starspeed-tunnel managed includes >>>'
+  printf 'include /tmp/gone.cfg\n'
+  printf 'operator_keep_me\n'
+} >"$HC"
+stripped=$(bash -c 'set -uo pipefail; source "$1" --help >/dev/null; strip_managed_block "$SST_HC"' _ "$SCRIPT")
+assert_contains "$stripped" "operator_keep_me" "unpaired begin marker does not drop later operator lines"
+assert_contains "$stripped" "maxconn 1" "operator preamble is preserved when markers are unpaired"
+
+{
+  printf 'global\n    maxconn 1\n'
+  printf '%s\n' '# >>> starspeed-tunnel managed includes >>>'
+  printf 'include /tmp/gone.cfg\n'
+  printf '%s\n' '# <<< starspeed-tunnel managed includes <<<'
+  printf 'operator_keep_me\n'
+} >"$HC"
+stripped=$(bash -c 'set -uo pipefail; source "$1" --help >/dev/null; strip_managed_block "$SST_HC"' _ "$SCRIPT")
+assert_not_contains "$stripped" "include /tmp/gone.cfg" "complete managed block is stripped"
+assert_contains "$stripped" "operator_keep_me" "lines after a complete managed block are kept"
+assert_contains "$stripped" "maxconn 1" "lines before a complete managed block are kept"
+
+# Two separate managed blocks must both be removed without eating the
+# operator's own lines that sit between them.
+{
+  printf 'global\n'
+  printf '%s\n' '# >>> starspeed-tunnel managed includes >>>'
+  printf 'include /tmp/first.cfg\n'
+  printf '%s\n' '# <<< starspeed-tunnel managed includes <<<'
+  printf 'operator_between_blocks\n'
+  printf '%s\n' '# >>> starspeed-tunnel managed includes >>>'
+  printf 'include /tmp/second.cfg\n'
+  printf '%s\n' '# <<< starspeed-tunnel managed includes <<<'
+  printf 'operator_after_blocks\n'
+} >"$HC"
+stripped=$(bash -c 'set -uo pipefail; source "$1" --help >/dev/null; strip_managed_block "$SST_HC"' _ "$SCRIPT")
+assert_not_contains "$stripped" "/tmp/first.cfg" "first managed block is stripped"
+assert_not_contains "$stripped" "/tmp/second.cfg" "second managed block is stripped"
+assert_contains "$stripped" "operator_between_blocks" "operator line between two managed blocks is kept"
+assert_contains "$stripped" "operator_after_blocks" "operator line after both managed blocks is kept"
+
+stripped2=$(bash -c 'set -uo pipefail; source "$1" --help >/dev/null; printf %s "$(strip_managed_block "$SST_HC")" >"$SST_HC"; strip_managed_block "$SST_HC"' _ "$SCRIPT")
+assert_eq "$stripped" "$stripped2" "stripping is idempotent with two managed blocks"
+
+t_start "invalid foreign status prints Overall UNKNOWN without a format leftover"
+rm -f "$STATE/foreign-1.env"
+st=$(bash -c 'set -uo pipefail; source "$1" --help >/dev/null; show_foreign_status 1' _ "$SCRIPT" 2>&1)
+assert_contains "$st" "Overall: " "invalid-state status still reports Overall"
+assert_contains "$st" "UNKNOWN" "invalid-state status uses the UNKNOWN label"
+assert_not_contains "$st" '%sUNKNOWN%s' "status does not leak a printf format string"
+
 t_start "state files are data, never executable"
 marker=/tmp/sst-pwned
 rm -f "$marker"

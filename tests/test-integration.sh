@@ -206,18 +206,22 @@ printf 'frontend operator_owned\n    bind :9999\n' >"$HAPROXY_DIR/conf.d/operato
 t_start "Iran is reconfigured with both foreigns"
 run_menu "$(iran_answers 2 45438 45438 45439 45439)" >/dev/null
 
-t_start "authorizing a foreign public key is idempotent"
+t_start "authorizing a foreign public key via menu 3 is idempotent"
 mkdir -p "$SSH_DIR"
 printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEYONE test-1\n' >"$AUTH"
-run_menu "1" >/dev/null
+run_menu "$(printf '3\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEYONE test-1\nq\n')" >/dev/null
 assert_contains "$(cat "$AUTH")" "AAAAC3NzaC1lZDI1NTE5AAAAITESTKEYONE" "existing key retained"
-run_menu "1" >/dev/null
+run_menu "$(printf '3\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEYONE test-1\nq\n')" >/dev/null
 assert_eq "$(grep -c 'AAAAC3NzaC1lZDI1NTE5AAAAITESTKEYONE' "$AUTH")" "1" "key not duplicated on re-authorize"
 
 t_start "malformed public keys are rejected"
 before=$(cat "$AUTH")
-run_menu "$(printf 'not-a-key\n\nq\n')" >/dev/null
+run_menu "$(printf '3\nnot-a-key\nq\n')" >/dev/null
 assert_eq "$(cat "$AUTH")" "$before" "no garbage appended to authorized_keys"
+
+t_start "authorize key aborts on exhausted input instead of looping"
+out=$(run_menu "$(printf '3\n')")
+assert_contains "$out" "no input available" "exhausted key paste does not hang"
 
 t_start "authorized_keys is never writable as a group or world"
 probe="$SSH_DIR/probe"; : >"$probe"; chmod 600 "$probe" 2>/dev/null
