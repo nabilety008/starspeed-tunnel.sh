@@ -197,6 +197,29 @@ Option **`5) Repair`** rebuilds a deleted fragment or unit from saved state, and
 offers to restore the last known-good backup when the live config no longer
 validates.
 
+## ❤️ Support starspeed-tunnel
+
+If starspeed-tunnel is useful to you and you'd like to support its continued
+development, you can help support future improvements, maintenance, testing,
+and releases.
+
+### 🇮🇷 Support from Iran
+
+[Support starspeed-tunnel on HamiBash](https://hamibash.com/nabilety008)
+
+### 🌍 International Support
+
+**USDT — BNB Smart Chain (BEP20)**
+
+`0x3A09DAc6A09A3760F063EBfBF6D523737BD498A5`
+
+**USDT — TRON (TRC20)**
+
+`TEmsoP2M9gZBymrc73z8NXdcy4LK2Qzkig`
+
+> Please verify both the wallet address and selected network before sending.
+> Cryptocurrency transactions may be irreversible.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

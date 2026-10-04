@@ -441,6 +441,29 @@ sudo haproxy -c -f /etc/haproxy/haproxy.cfg
 * **ارتباط SSH قطع می‌شود** — `ServerAliveInterval=15` و `ServerAliveCountMax=3`
   تنظیم شده‌اند؛ اگر قطعی‌های مکرر دارید، مسیر شبکه یا کیفیت لینک را بررسی کنید.
 
+## ❤️ حمایت از starspeed-tunnel
+
+اگر starspeed-tunnel برای شما مفید بوده و مایلید از ادامه توسعه آن حمایت کنید،
+می‌توانید به توسعه قابلیت‌های آینده، نگهداری، تست و انتشار نسخه‌های بعدی پروژه
+کمک کنید.
+
+### 🇮🇷 حمایت از داخل ایران
+
+[حمایت از starspeed-tunnel در حامی‌باش](https://hamibash.com/nabilety008)
+
+### 🌍 حمایت بین‌المللی
+
+**USDT — BNB Smart Chain (BEP20)**
+
+`0x3A09DAc6A09A3760F063EBfBF6D523737BD498A5`
+
+**USDT — TRON (TRC20)**
+
+`TEmsoP2M9gZBymrc73z8NXdcy4LK2Qzkig`
+
+> قبل از ارسال، آدرس کیف پول و شبکه انتخاب‌شده را با دقت بررسی کنید.
+> تراکنش‌های ارز دیجیتال ممکن است غیرقابل بازگشت باشند.
+
 ## لایسنس (License)
 
 این پروژه تحت لایسنس MIT منتشر می‌شود. متن کامل در [LICENSE](LICENSE).
