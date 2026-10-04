@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Minimal fake HAProxy used by the test suite.
+#
+# -c   : validate the config. Fails if any include target is missing, if an
+#        include points at a nonexistent file, if the file contains the marker
+#        string FAILVALIDATE, or if it references an unknown "bind" port that
+#        the test marked as forbidden.
+# --version / -v : report a version.
+set -uo pipefail
+
+FAKE_FORBIDDEN_PORTS=${FAKE_HAPROXY_FORBIDDEN_PORTS:-}
+declare -a matches=()
+
+if [[ ${1:-} == "--version" || ${1:-} == "-v" ]]; then
+  echo "HAProxy fake 2.8-test"
+  exit 0
+fi
+
+validate=0
+cfg=""
+while (( $# )); do
+  case $1 in
+    -c|--check) validate=1; shift ;;
+    -f) cfg=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if (( validate == 0 )); then
+  echo "fake haproxy: only -c/-f is supported in this test stub" >&2
+  exit 2
+fi
+
+[[ -n $cfg && -f $cfg ]] || { echo "[ALERT] config file not found: $cfg" >&2; exit 1; }
+
+if grep -q 'FAILVALIDATE' "$cfg"; then
+  echo "[ALERT] parse error near 'FAILVALIDATE' in $cfg" >&2
+  exit 1
+fi
+
+# Resolve every include; a missing fragment is a config error. HAProxy expands
+# glob patterns, so a glob that matches nothing is an error but a glob that
+# matches at least one file is fine.
+while read -r inc; do
+  if [[ $inc == *[*?]* ]]; then
+    # compgen -G performs the glob without unquoted word splitting.
+    matches=()
+    mapfile -t matches < <(compgen -G "$inc")
+    (( ${#matches[@]} )) || {
+      echo "[ALERT] cannot read include file '$inc'" >&2
+      exit 1
+    }
+    for m in "${matches[@]}"; do
+      if grep -q 'FAILVALIDATE' "$m"; then
+        echo "[ALERT] parse error in included file '$m'" >&2
+        exit 1
+      fi
+    done
+    continue
+  fi
+  if [[ ! -f $inc ]]; then
+    echo "[ALERT] cannot read include file '$inc'" >&2
+    exit 1
+  fi
+  if grep -q 'FAILVALIDATE' "$inc"; then
+    echo "[ALERT] parse error in included file '$inc'" >&2
+    exit 1
+  fi
+done < <(awk '/^[[:space:]]*include[[:space:]]/ {print $2}' "$cfg")
+
+if [[ -n $FAKE_FORBIDDEN_PORTS ]]; then
+  for p in ${FAKE_FORBIDDEN_PORTS//,/ }; do
+    if grep -Eq "bind[[:space:]]+(0\.0\.0\.0|\*):${p}([[:space:]]|\$)" "$cfg"; then
+      echo "[ALERT] cannot bind socket [0.0.0.0:${p}]" >&2
+      exit 1
+    fi
+  done
+fi
+
+echo "Configuration file is valid"
+exit 0

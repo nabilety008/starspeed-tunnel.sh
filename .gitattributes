@@ -1,0 +1,11 @@
+# Shell scripts must keep LF endings; a CRLF shebang breaks on Linux.
+*.sh text eol=lf
+
+# Files without an extension that are still shell scripts.
+tests/stubs/* text eol=lf
+
+# Normalise text handling for everything else.
+*.md text eol=lf
+LICENSE text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf

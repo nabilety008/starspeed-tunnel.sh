@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Minimal fake systemctl used by the test suite.
+#
+# Real systemd tracks "enabled at boot" and "currently active" as independent
+# facts, so this stub keeps two files per unit:
+#   <unit>.enabled  -> present when the unit is enabled
+#   <unit>.active   -> present when the unit is running
+#
+# Supported verbs: is-active, is-enabled, is-failed, enable, disable,
+#                  start, stop, restart, status, daemon-reload, reload,
+#                  reload-or-restart, reset-failed
+# Anything else exits 0 silently (the installer calls some verbs defensively).
+set -uo pipefail
+
+ST=${FAKE_SYSTEMD_STATE:?FAKE_SYSTEMD_STATE must be set}
+mkdir -p "$ST"
+
+# Units the test wants to fail on start, as a comma separated list.
+FAIL_ON_START=${FAKE_SYSTEMD_FAIL_ON_START:-}
+
+unit=$2
+
+on()  { : >"$ST/$unit.$1"; }
+off() { rm -f "$ST/$unit.$1"; }
+
+verb=${1:-}
+
+case $verb in
+  is-active)   [[ -e $ST/$unit.active  ]] || exit 3; printf 'active\n';   exit 0 ;;
+  is-enabled)  [[ -e $ST/$unit.enabled ]] || exit 1; printf 'enabled\n';  exit 0 ;;
+  is-failed)   [[ -e $ST/$unit.failed  ]] || exit 1; printf 'failed\n';   exit 0 ;;
+  enable)      on  enabled;                          exit 0 ;;
+  disable)     off enabled;                          exit 0 ;;
+  start)
+    case ",${FAIL_ON_START}," in
+      *",${unit},"*) off active; on failed
+        echo "Job for $unit failed (test stub)" >&2; exit 1 ;;
+    esac
+    on active; off failed; exit 0 ;;
+  stop)
+    off active; on failed; exit 0 ;;
+  restart|reload|reload-or-restart)
+    case ",${FAIL_ON_START}," in
+      *",${unit},"*) off active; on failed
+        echo "Job for $unit failed (test stub)" >&2; exit 1 ;;
+    esac
+    on active; off failed; exit 0 ;;
+  reset-failed) off failed; exit 0 ;;
+  daemon-reload) exit 0 ;;
+  status)
+    printf 'Unit %s: active=%s enabled=%s\n' "$unit" \
+      "$([[ -e $ST/$unit.active  ]] && echo yes || echo no)" \
+      "$([[ -e $ST/$unit.enabled ]] && echo yes || echo no)"
+    exit 0 ;;
+  *) exit 0 ;;
+esac

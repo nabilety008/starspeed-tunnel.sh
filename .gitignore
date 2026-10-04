@@ -1,0 +1,21 @@
+# Editor / OS noise
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local test scratch. The suites use disposable sandboxes under $TMPDIR and
+# write their own artifacts there; nothing should land in the repo.
+*.tmp
+*.log
+tests/sandbox/
+
+# Never commit key material or sandbox state if it is ever generated locally.
+*.pem
+*.key
+id_rsa
+id_ed25519
+*.pub
+known_hosts
+authorized_keys

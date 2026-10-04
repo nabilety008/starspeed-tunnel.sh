@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Minimal fake ss used by the test suite.
+#
+# Listeners are declared in $FAKE_SS_LISTEN as a comma separated list of ports,
+# or via files in $FAKE_SS_DIR/<port> (useful for tests that flip listeners
+# mid-run, e.g. removing one to simulate a broken tunnel).
+#
+# Supports:   ss -H -lnt   /   ss -lnt
+set -uo pipefail
+
+LISTEN_SPEC=${FAKE_SS_LISTEN:-}
+DIR=${FAKE_SS_DIR:-}
+
+has_flag=0
+for a in "$@"; do
+  [[ $a == -H ]] && has_flag=1
+done
+
+emit() {
+  local port=$1
+  [[ $has_flag == 1 ]] || printf 'State  Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
+  printf 'LISTEN 0      128        0.0.0.0:%s                0.0.0.0:*\n' "$port"
+}
+
+if [[ -n $DIR && -d $DIR ]]; then
+  shopt -s nullglob
+  for f in "$DIR"/*; do
+    [[ -f $f ]] || continue
+    emit "$(basename "$f")"
+  done
+  shopt -u nullglob
+  exit 0
+fi
+
+if [[ -n $LISTEN_SPEC ]]; then
+  IFS=',' read -ra ports <<<"$LISTEN_SPEC"
+  for p in "${ports[@]}"; do
+    [[ -n $p ]] && emit "$p"
+  done
+fi
+exit 0
