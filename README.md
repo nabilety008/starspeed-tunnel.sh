@@ -1,7 +1,9 @@
+English | [فارسی](README.fa.md)
+
 # starspeed-tunnel
 
 Interactive installer for a **multi-lane reverse-SSH tunnel** through an Iran
-server, designed to carry Xray/3x-ui traffic to one or more foreign servers
+server, designed to carry Xray/3x-ui traffic to one or two foreign servers
 without touching the Xray/3x-ui configuration itself.
 
 ```
@@ -71,6 +73,9 @@ chmod +x starspeed-tunnel.sh
 ```bash
 sudo ./starspeed-tunnel.sh            # interactive menu
 sudo ./starspeed-tunnel.sh --status   # status only, no changes
+sudo ./starspeed-tunnel.sh --setup-code 1
+sudo ./starspeed-tunnel.sh --role
+sudo ./starspeed-tunnel.sh --version
 sudo ./starspeed-tunnel.sh --help     # full option list
 ```
 
