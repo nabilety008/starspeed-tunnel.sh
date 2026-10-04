@@ -41,8 +41,29 @@ Two hosts are involved:
 
 ## Download
 
+Run on the server you are configuring. The explicit `-o` form is used so the
+output filename is never derived from the URL path:
+
 ```bash
-curl -fsSL -O https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/starspeed-tunnel.sh
+cd /root
+curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/starspeed-tunnel.sh -o starspeed-tunnel.sh
+chmod +x starspeed-tunnel.sh
+./starspeed-tunnel.sh
+```
+
+One-line alternative:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/starspeed-tunnel.sh -o /root/starspeed-tunnel.sh && chmod +x /root/starspeed-tunnel.sh && /root/starspeed-tunnel.sh
+```
+
+To update an existing copy later, re-run the same command and re-apply the
+executable bit:
+
+```bash
+cd /root
+curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/starspeed-tunnel.sh -o starspeed-tunnel.sh
+chmod +x starspeed-tunnel.sh
 ```
 
 ## Usage
