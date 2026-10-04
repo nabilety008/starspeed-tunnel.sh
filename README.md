@@ -197,6 +197,8 @@ Option **`5) Repair`** rebuilds a deleted fragment or unit from saved state, and
 offers to restore the last known-good backup when the live config no longer
 validates.
 
+<a id="support-starspeed-tunnel"></a>
+
 ## ❤️ Support starspeed-tunnel
 
 If starspeed-tunnel is useful to you and you'd like to support its continued
