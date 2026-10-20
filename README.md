@@ -66,18 +66,58 @@ installer offers to install missing packages via `apt-get`.
 
 ## 4. Install / Download
 
-Run on the server you are configuring. The explicit `-o` form is used so the
-output filename is never derived from the URL path:
+Install and open the Persian interactive menu with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang fa
+```
+
+With `wget` instead:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang fa
+```
+
+English menu:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang en
+```
+
+Default (English):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash
+```
+
+Equivalent `wget` commands:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang en
+wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash
+```
+
+The bootstrap downloads to a temporary file, validates the Bash entrypoint,
+then atomically installs it as `/usr/local/sbin/starspeed-tunnel`. Re-running
+the command updates only that executable; existing configuration under
+`/etc/starspeed-tunnel` is preserved. Supported systems are Ubuntu 22.04 and
+24.04. The main installer offers to install missing runtime packages with APT.
+The bootstrap requires root (normally via `sudo`) plus either `curl` or `wget`.
+
+After installation, launch it again at any time with:
+
+```bash
+sudo starspeed-tunnel
+```
+
+Manual download remains supported:
 
 ```bash
 cd /root
 curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/starspeed-tunnel.sh -o starspeed-tunnel.sh
 chmod +x starspeed-tunnel.sh
-./starspeed-tunnel.sh
+sudo ./starspeed-tunnel.sh
 ```
-
-To update an existing copy later, re-run the same command and re-apply the
-executable bit.
 
 ## 5. Quick start
 

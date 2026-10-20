@@ -83,18 +83,58 @@ inbound مربوط به Xray شما باید از قبل وجود داشته ب�
 
 ## ۶. نصب / دانلود
 
-این دستور را روی همان سروری اجرا کنید که می‌خواهید پیکربندی کنید. از فرم صریح `-o`
-استفاده می‌شود تا نام فایل خروجی هرگز از مسیر URL ساخته نشود:
+نصب و اجرای منوی فارسی با یک دستور:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang fa
+```
+
+فرمان جایگزین با `wget`:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang fa
+```
+
+نصب و اجرای منوی انگلیسی:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang en
+```
+
+حالت پیش‌فرض (انگلیسی):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash
+```
+
+فرمان‌های معادل با `wget`:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang en
+wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash
+```
+
+Bootstrap ابتدا فایل اصلی را کامل در یک فایل موقت دانلود و با Bash اعتبارسنجی می‌کند،
+سپس آن را به‌صورت اتمیک در `/usr/local/sbin/starspeed-tunnel` نصب می‌کند. اجرای مجدد
+فقط فایل اجرایی را به‌روز می‌کند و تنظیمات موجود در `/etc/starspeed-tunnel` حفظ
+می‌شوند. سیستم‌های پشتیبانی‌شده Ubuntu 22.04 و 24.04 هستند و نصب‌کننده‌ی اصلی در
+صورت نیاز نصب پکیج‌های runtime را با APT پیشنهاد می‌دهد.
+Bootstrap باید با root (معمولاً `sudo`) اجرا شود و وجود `curl` یا `wget` الزامی است.
+
+اجرای مجدد پس از نصب:
+
+```bash
+sudo starspeed-tunnel
+```
+
+روش نصب دستی همچنان پشتیبانی می‌شود:
 
 ```bash
 cd /root
 curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/starspeed-tunnel.sh -o starspeed-tunnel.sh
 chmod +x starspeed-tunnel.sh
-./starspeed-tunnel.sh
+sudo ./starspeed-tunnel.sh
 ```
-
-برای به‌روزرسانی یک نسخه‌ی موجود، همین دستور را دوباره اجرا کنید و مجدداً بیت اجرایی
-را اعمال کنید.
 
 ## ۷. شروع سریع
 
