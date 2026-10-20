@@ -2,331 +2,134 @@ English | [فارسی](README.fa.md)
 
 # StarSpeed Tunnel
 
-Interactive installer for a **multi-lane reverse-SSH tunnel** through an Iran
-server, designed to carry Xray/3x-ui traffic from one or two foreign servers
-without ever touching the Xray/3x-ui configuration itself.
+Safe, interactive multi-lane reverse-SSH tunneling through an Iran server for
+existing Xray/3x-ui inbounds. The tool manages HAProxy, SSH lanes and systemd
+units; it does not modify Xray/3x-ui.
 
-```
-Client -> Iran public frontend port -> HAProxy -> 4 local reverse-SSH lanes
-       -> Foreign server -> existing Xray inbound
-```
+## Key features
 
-Each foreign server gets **four independent reverse-SSH lanes**. HAProxy
-round-robins across them, so a single stalled lane cannot take the tunnel down.
-Foreign #1 and Foreign #2 are fully independent: separate frontend, separate
-Xray destination, separate lane block, separate SSH key, separate `known_hosts`,
-separate saved state and separate systemd units.
+- Four independent reverse-SSH lanes per foreign server.
+- HAProxy round-robin balancing and lane failover.
+- Guided setup for one Iran server and up to two foreign servers.
+- Validation and timestamped backups before HAProxy changes.
+- Idempotent setup, repair and removal.
+- Strict SSH host-key checking and secret-free setup codes.
+- English-only CLI for consistent SSH terminal rendering.
 
-Version 1.1.0 adds an English interactive menu, step-by-step
-setup wizards with a confirmation summary before anything is applied, an
-at-a-glance status header, and a read-only-first diagnose & repair flow.
+## Quick Install / Run
 
-## 1. Features
-
-* **Two guided wizards** - one for the Iran side, one for each foreign server.
-* **English-only CLI** - avoids RTL/BiDi rendering problems in SSH terminals.
-* **Setup codes** - a short base64 string carries each foreign's allocation; no
-  secrets inside.
-* **Four reverse-SSH lanes per foreign** with HAProxy round-robin failover.
-* **Safe by construction** - candidate HAProxy config is validated with
-  `haproxy -c` before activation; the live config is backed up first.
-* **Idempotent** - re-running setup, repair or uninstall converges instead of
-  duplicating units or config blocks.
-* **Honest status** - per-foreign frontend, Xray destination, every lane, and
-  HAProxy health, with no secret ever printed.
-* **Read-only diagnostics first** - repair reports what is wrong before it asks
-  permission to change anything.
-
-## 2. Architecture
-
-```
-+---------+   public      +----------+  reverse SSH   +-----------+
-| Client  | --> :FRONTEND |  Iran    | ==== LANE1..4=> |  Foreign  |
-+---------+               |  HAProxy |= round robin == |  Xray in  |
-                          +----------+                +-----------+
-```
-
-* The client connects to a **public frontend port on Iran**.
-* HAProxy balances that frontend across **four reverse-SSH lanes**.
-* Each lane is an `ssh -R` forward from the foreign server back into Iran.
-* The foreign server forwards the lane to its **existing local Xray inbound**.
-
-The lockstep is deliberate: Iran owns the public port and the lane allocation;
-the foreign server owns the SSH key and the Xray destination.
-
-## 3. Requirements
-
-Ubuntu 22.04 / 24.04 / 26.04 LTS with `systemd`, the OpenSSH client, and HAProxy. The
-installer offers to install missing packages via `apt-get`.
-
-| Host    | Role     | Needs                                     |
-| ------- | -------- | ----------------------------------------- |
-| Iran    | frontend | public IP, HAProxy, OpenSSH server         |
-| Foreign | backend  | OpenSSH client, an existing Xray inbound   |
-
-## 4. Install / Download
-
-Install and open the interactive English menu with one command:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang fa
-```
-
-`--lang fa` is retained for backward compatibility. It prints a short English
-notice and launches the English menu; Persian CLI output is no longer provided.
-
-With `wget` instead:
-
-```bash
-wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang fa
-```
-
-English menu:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang en
-```
-
-Default (English):
+### Install & Run (curl — Recommended)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash
 ```
 
-Equivalent `wget` commands:
+### Install & Run (wget — Alternative)
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang en
 wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash
 ```
 
-The bootstrap downloads to a temporary file, validates the Bash entrypoint,
-then atomically installs it as `/usr/local/sbin/starspeed-tunnel`. Re-running
-the command updates only that executable; existing configuration under
-`/etc/starspeed-tunnel` is preserved. Supported systems are Ubuntu 22.04,
-24.04 and 26.04 LTS. The main installer offers to install missing runtime packages with APT.
-The bootstrap requires root (normally via `sudo`) plus either `curl` or `wget`.
-It uses standard Ubuntu packages (`bash`, `systemd`, `openssh-client`,
-`haproxy`, and `iproute2`) and does not alter UFW, nftables, or iptables rules.
-
-After installation, launch it again at any time with:
+### Run Only (Already Installed)
 
 ```bash
-sudo starspeed-tunnel
+sudo /usr/local/sbin/starspeed-tunnel
 ```
 
-Manual download remains supported:
+The installer validates the complete download and atomically installs it at
+`/usr/local/sbin/starspeed-tunnel`. Reinstallation updates only the executable;
+configuration under `/etc/starspeed-tunnel` is preserved.
+
+## Supported operating systems
+
+- Ubuntu 22.04 LTS
+- Ubuntu 24.04 LTS
+- Ubuntu 26.04 LTS
+
+Required components are Bash, systemd, OpenSSH and HAProxy. Missing runtime
+packages can be installed through APT. The tool does not alter UFW, nftables or
+iptables rules.
+
+## How it works
+
+```text
+Client -> Iran public frontend -> HAProxy -> 4 reverse-SSH lanes
+       -> Foreign server -> existing Xray inbound
+```
+
+The Iran server owns the public frontend and lane allocation. Each foreign
+server owns its SSH key, pinned Iran host key, four systemd units and Xray
+destination. Foreign servers remain isolated from one another.
+
+## Configuration guide
+
+1. On Iran, select `1) Setup Iran Server`, enter the public frontend and
+   existing foreign Xray port, confirm, then copy the generated setup code.
+2. On the foreign server, select `2) Setup Foreign Server`, paste the setup
+   code, enter the Iran address and confirm. Copy the printed SSH public key.
+3. Back on Iran, select `3) Authorize Foreign SSH Key` and paste that key.
+4. Select `4) Tunnel Status` to verify the frontend, HAProxy and all four lanes.
+
+The Xray inbound must already exist and be listening. Setup codes contain port
+allocation only—never credentials or private keys.
+
+## Advanced usage
+
+| Menu | Action |
+| --- | --- |
+| `1` | Configure the Iran frontend and HAProxy lanes |
+| `2` | Configure a foreign server from a setup code |
+| `3` | Authorize a foreign SSH public key on Iran |
+| `4` | Show read-only tunnel status |
+| `5` | Diagnose first, then offer scoped repairs |
+| `6` | Remove one foreign tunnel |
+| `7` | Show built-in help |
+| `8` | Show language compatibility information |
+| `9` | Remove only StarSpeed-managed files |
+
+Useful options:
 
 ```bash
-cd /root
-curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/starspeed-tunnel.sh -o starspeed-tunnel.sh
-chmod +x starspeed-tunnel.sh
-sudo ./starspeed-tunnel.sh
+sudo /usr/local/sbin/starspeed-tunnel --status
+sudo /usr/local/sbin/starspeed-tunnel --setup-code 1
+sudo /usr/local/sbin/starspeed-tunnel --role
+sudo /usr/local/sbin/starspeed-tunnel --help
 ```
 
-## 5. Quick start
+The CLI is English-only. `--lang en` works normally; `--lang fa` remains
+accepted for backward compatibility, prints an English notice and opens the
+English menu.
 
-Three short steps, in this order:
+Managed files are stored under `/etc/starspeed-tunnel`; lane units are named
+`starspeed-tunnel-f<N>-lane<M>.service`. Foreign SSH material is stored in
+`/root/.ssh/starspeed-tunnel_*`. Xray/3x-ui configuration remains read-only.
 
-1. **On Iran** choose `1) Setup Iran Server`, tell it how many foreign servers
-   there are, then confirm the summary. Copy each printed **setup code**.
-2. **On each foreign server** choose `2) Setup Foreign Server`, paste the setup
-   code, then type the Iran address. The foreign prints its SSH public key.
-3. **Back on Iran** choose `3) Authorize Foreign SSH Key` and paste that public
-   key. The tunnel is now live.
+## Troubleshooting
 
-## 6. Iran server setup
+1. Run menu option `4) Tunnel Status`.
+2. Validate HAProxy if its service or frontend is down:
 
-Choose **`1) Setup Iran Server`**. The wizard:
+   ```bash
+   sudo haproxy -c -f /etc/haproxy/haproxy.cfg
+   ```
 
-* shows any existing configuration and reuses its port allocation unchanged;
-* asks how many foreign servers will tunnel through Iran (1 or 2);
-* for each **new** foreign, asks a public frontend port on Iran and the Xray
-  inbound port used on that foreign server;
-* allocates a block of four free lane ports per foreign;
-* prints a **configuration summary** and asks you to confirm it;
-* only after confirmation does it write state, render the fragments, validate
-  the whole candidate with `haproxy -c`, back up the live config, and reload.
+3. Use menu option `5) Diagnose & Repair` to rebuild managed fragments or units
+   from saved state, or restore a known-good backup.
 
-If you decline the confirmation, nothing is written and nothing changes.
+Common causes:
 
-Your clients then connect to the **frontend port** on Iran.
+- `nothing is listening on 127.0.0.1:<port>`: the foreign Xray inbound is not
+  listening; StarSpeed does not create or alter it.
+- `Lane N: DOWN`: inspect the corresponding foreign systemd lane service.
+- `host key not pinned`: ensure `ssh-keyscan` can reach the Iran SSH service.
 
-## 7. Foreign server setup
-
-Choose **`2) Setup Foreign Server`**. The wizard is **code-first**:
-
-* paste the **setup code** from Iran; the foreign index, frontend and lane
-  allocation are read straight from it;
-* if this host is already configured you may keep the existing setup or
-  overwrite it (a declined overwrite changes nothing);
-* type the **Iran address** (the code does not carry it);
-* confirm the summary to apply.
-
-The foreign side then generates its own SSH keypair, pins the Iran host key via
-`ssh-keyscan`, and installs four hardened systemd units named
-`starspeed-tunnel-f<N>-lane<M>.service`. It never prompts for a password:
-`BatchMode=yes`, `ExitOnForwardFailure=yes`, `ServerAliveInterval` and
-`ServerAliveCountMax` are all set.
-
-## 8. Authorize the SSH key
-
-The foreign server prints its SSH **public** key. On Iran choose
-**`3) Authorize Foreign SSH Key`** and paste it (or `q` to finish).
-
-The private key never leaves the foreign server.
-
-## 9. Status
-
-Choose **`4) Tunnel Status`**, or run `--status` for a non-interactive report.
-The header shows your role, the number of configured foreigns, and HAProxy (on
-Iran) or the count of running lanes (on a foreign). Per foreign you get:
-
-* the frontend port and Xray destination;
-* the state of every lane;
-* HAProxy health and config validity (on Iran);
-* SSH authorized-key count on Iran, or Iran host-key presence on a foreign.
-
-Status is **read-only** and never prints private key material. It also surfaces
-the last few errors from the install log, if any.
-
-## 10. Diagnose & repair
-
-Choose **`5) Diagnose & Repair`**. It runs **read-only checks first** and lists
-what it proposes to change; nothing is modified until you confirm each step. It
-can:
-
-* remove a broken state file (with confirmation);
-* rebuild a missing fragment or unit from saved state;
-* restore the last known-good HAProxy backup when the live config no longer
-  validates;
-* rebind a frontend that is not listening.
-
-## 11. Removing a foreign and uninstalling
-
-* **`6) Remove Foreign Tunnel`** removes a single foreign: its state, fragment,
-  lane units and managed block section. Other foreigns are untouched.
-* **`9) Uninstall`** removes only files this project created - the lane units,
-  saved state, generated fragments and the managed block inside `haproxy.cfg`.
-  Unrelated HAProxy configuration and anything belonging to Xray / 3x-ui are
-  left alone. The SSH keypair is kept by default.
-
-## 12. Menu reference
-
-| Option | Action |
-| ------ | ------ |
-| `1` | Setup Iran Server - allocate frontends/lanes and write HAProxy config |
-| `2` | Setup Foreign Server - runs on the foreign server (code-first) |
-| `3` | Authorize Foreign SSH Key - runs on Iran |
-| `4` | Tunnel Status - lanes, frontends, HAProxy health |
-| `5` | Diagnose & Repair - read-only checks first, then repair |
-| `6` | Remove Foreign Tunnel - remove one foreign only |
-| `7` | Help & Documentation - architecture, ports, setup codes |
-| `8` | Settings & Language - English interface information |
-| `9` | Uninstall - remove only StarSpeed-managed files |
-| `0` | Exit |
-
-Command-line options:
+Tests run in disposable sandboxes:
 
 ```bash
-sudo ./starspeed-tunnel.sh            # interactive menu
-sudo ./starspeed-tunnel.sh --status   # status only, no changes
-sudo ./starspeed-tunnel.sh --setup-code 1
-sudo ./starspeed-tunnel.sh --role
-sudo ./starspeed-tunnel.sh --lang fa  # compatibility notice; uses English
-sudo ./starspeed-tunnel.sh --version
-sudo ./starspeed-tunnel.sh --help     # full option list
+bash tests/run-tests.sh
+bash tests/syntax-check.sh
 ```
 
-## 13. Language
+## License
 
-The CLI is **English-only**. Menus, prompts, status, diagnostics, warnings and
-errors always use English so output renders consistently in SSH terminals.
-`--lang en` works normally. For backward compatibility, `--lang fa`, a saved
-legacy `fa` preference, `SST_LANG=fa`, or a Persian system locale are accepted
-but still use English; explicit `--lang fa` prints a short English notice.
-Persian documentation remains available in `README.fa.md`.
-
-## 14. Safety properties
-
-* **HAProxy is validated before activation.** A candidate config is checked with
-  `haproxy -c`; if it fails, the live config is left untouched.
-* **Backups before every rewrite** under `/etc/starspeed-tunnel/backups`.
-* **Your own HAProxy config is preserved.** Only a single delimited managed
-  block (`# >>> starspeed-tunnel managed includes >>>` /
-  `# <<< starspeed-tunnel managed includes <<<`) is written, replaced or
-  stripped. Re-running is byte-stable.
-* **Strict host-key checking stays on.** Each foreign pins the Iran host key in
-  its own `known_hosts`.
-* **Setup codes carry no secrets** - only the allocation (index, frontend,
-  lanes, SSH port).
-* **State files are data, never code.** Values are validated and never `eval`'d.
-* **Xray / 3x-ui are read-only** - the tool never creates, edits or deletes an
-  inbound, never disables host-key checking, and adds no traffic shaping or
-  artificial delay.
-
-## 15. Files, tests, troubleshooting and license
-
-**Files it manages**
-
-```
-/etc/starspeed-tunnel/
-  state/foreign-N.env        per-foreign saved state
-  state/role                 iran | foreign
-  lang                       saved display language
-  haproxy/foreign-N.cfg      per-foreign HAProxy fragment
-  backups/                   timestamped backups
-  install.log                log file
-/etc/systemd/system/starspeed-tunnel-f<N>-lane<M>.service
-/root/.ssh/starspeed-tunnel_f<N>        private key (foreign only)
-/root/.ssh/starspeed-tunnel_f<N>.pub    public key (foreign only)
-/root/.ssh/starspeed-tunnel_iran<N>    pinned Iran host key (foreign only)
-```
-
-**Tests** - the suite runs against disposable sandboxes with fake `systemctl`,
-`ss`, `haproxy` and `ssh-keyscan`. It never touches a real `/etc`, real
-systemd, a real HAProxy, the network or SSH.
-
-```bash
-bash tests/run-tests.sh          # everything
-bash tests/run-tests.sh unit     # validation/allocation/state only
-bash tests/syntax-check.sh       # bash -n over every shell file
-```
-
-**Troubleshooting** - run **`4) Tunnel Status`** first. If HAProxy will not
-start, validate manually:
-
-```bash
-sudo haproxy -c -f /etc/haproxy/haproxy.cfg
-```
-
-Then run **`5) Diagnose & Repair`** to rebuild a deleted fragment or unit from
-saved state, or restore the last known-good backup.
-
-**License** - MIT. See [LICENSE](LICENSE).
-
-<a id="support-starspeed-tunnel"></a>
-
-## ❤️ Support StarSpeed Tunnel
-
-If StarSpeed Tunnel is useful to you and you'd like to support its continued
-development, you can help support future improvements, maintenance, testing,
-and releases.
-
-### 🇮🇷 Support from Iran
-
-[Support starspeed-tunnel on Daramet](https://daramet.com/nabilety)
-
-[Support starspeed-tunnel on HamiBash](https://hamibash.com/nabilety008)
-### 🌍 International Support
-
-**USDT — BNB Smart Chain (BEP20)**
-
-`0x3A09DAc6A09A3760F063EBfBF6D523737BD498A5`
-
-**USDT — TRON (TRC20)**
-
-`TEmsoP2M9gZBymrc73z8NXdcy4LK2Qzkig`
-
-> Please verify both the wallet address and selected network before sending.
-> Cryptocurrency transactions may be irreversible.
+MIT — see [LICENSE](LICENSE).
