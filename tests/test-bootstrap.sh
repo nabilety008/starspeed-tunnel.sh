@@ -36,6 +36,9 @@ cp "$SST_TEST_PAYLOAD" "$out"
 EOF
 chmod +x "$TMPROOT/tools/wget"
 
+t_start 'bootstrap source is English-only'
+if grep -Eq '[؀-ۿ]' "$BOOTSTRAP"; then t_fail 'bootstrap contains no Persian/Arabic script'; else t_ok 'bootstrap contains no Persian/Arabic script'; fi
+
 make_os() {
   local version=${1:-24.04}
   printf 'ID=ubuntu\nVERSION_ID="%s"\nPRETTY_NAME="Ubuntu %s"\n' "$version" "$version" >"$TMPROOT/os-release"
@@ -66,11 +69,11 @@ run_bootstrap --status >/dev/null
 assert_file "$TMPROOT/bin/starspeed-tunnel" 'entrypoint installed'
 assert_eq "$(tail -n1 "$TMPROOT/exec.log")" '--status' 'arguments passed to entrypoint'
 
-t_start '--lang sets Persian then launches the interactive entrypoint'
+t_start '--lang fa remains compatible and still launches the entrypoint'
 : >"$TMPROOT/exec.log"
 run_bootstrap --lang fa >/dev/null
-assert_eq "$(sed -n '1p' "$TMPROOT/exec.log")" '--lang fa' 'language persisted through existing option'
-assert_eq "$(sed -n '2p' "$TMPROOT/exec.log")" '' 'menu launched after language selection'
+assert_eq "$(sed -n '1p' "$TMPROOT/exec.log")" '--lang fa' 'compatibility option passed through'
+assert_eq "$(sed -n '2p' "$TMPROOT/exec.log")" '' 'menu launched after compatibility notice'
 
 t_start '--lang en and default both launch an English menu'
 : >"$TMPROOT/exec.log"
@@ -100,13 +103,13 @@ else
 fi
 assert_contains "$(cat "$TMPROOT/unsupported.out")" 'unsupported operating system' 'clear unsupported OS error'
 
-t_start 'Persian selection localizes installer failures'
+t_start 'installer errors remain English with --lang fa'
 if run_bootstrap --lang fa --status >"$TMPROOT/fa-error.out" 2>&1; then
-  t_fail 'Persian unsupported OS rejected' 'bootstrap unexpectedly succeeded'
+  t_fail 'unsupported OS rejected with --lang fa' 'bootstrap unexpectedly succeeded'
 else
-  t_ok 'Persian unsupported OS rejected'
+  t_ok 'unsupported OS rejected with --lang fa'
 fi
-assert_contains "$(cat "$TMPROOT/fa-error.out")" 'سیستم‌عامل پشتیبانی نمی‌شود' 'Persian error is localized'
+assert_contains "$(cat "$TMPROOT/fa-error.out")" 'unsupported operating system' 'error remains English'
 
 t_start 'invalid download never replaces a working install'
 make_os; cp "$TMPROOT/bin/starspeed-tunnel" "$TMPROOT/known-good"

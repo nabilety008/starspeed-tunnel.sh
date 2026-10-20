@@ -411,17 +411,20 @@ assert_no_file "$SANDBOX/etc/3x-ui" "no 3x-ui state created"
 # ---------------------------------------------------------------------------
 sandbox_new iran
 
+t_start "CLI source contains no Persian/Arabic-script text"
+if grep -Eq '[؀-ۿ]' "$SCRIPT"; then t_fail 'CLI source is English-only'; else t_ok 'CLI source is English-only'; fi
+
 t_start "the menu is shown in English by default"
 out=$(SST_LANG=en run_menu '0')
 assert_contains "$out" "StarSpeed Tunnel" "English title shown"
 assert_contains "$out" "Setup Iran Server" "English menu entry shown"
 assert_contains "$out" "Uninstall" "English uninstall entry shown"
 
-t_start "the menu is shown in Persian when requested"
+t_start "SST_LANG=fa still renders the English-only menu"
 out=$(SST_LANG=fa run_menu '0')
-assert_contains "$out" "استاراسپید تونل" "Persian title shown"
-assert_contains "$out" "راه‌اندازی سرور ایران" "Persian menu entry shown"
-assert_not_contains "$out" "Setup Iran Server" "English labels are suppressed"
+assert_contains "$out" "StarSpeed Tunnel" "English title shown"
+assert_contains "$out" "Setup Iran Server" "English menu entry shown"
+if grep -Eq '[؀-ۿ]' <<<"$out"; then t_fail 'no Persian/Arabic script in CLI output'; else t_ok 'no Persian/Arabic script in CLI output'; fi
 
 t_start "an invalid menu selection is reported and changes nothing"
 out=$(run_menu '99\n0')
@@ -434,16 +437,19 @@ assert_contains "$out" "Help & Documentation" "help screen is reachable"
 assert_contains "$out" "Setup code" "help explains the setup code"
 assert_no_file "$STATE/role" "viewing help writes no state"
 
-t_start "the Settings menu can switch to Persian and persist it"
+t_start "the Settings menu keeps English when Persian is selected"
 out=$(run_menu "$(printf '8\n2\n0')")
-assert_contains "$out" "زبان ذخیره شد" "saving the language is confirmed (in Persian)"
-assert_eq "$(cat "$BASE/lang" 2>/dev/null)" "fa" "language choice persisted to disk"
+assert_contains "$out" "Persian CLI is no longer supported; using English." "compatibility notice shown"
+assert_eq "$(cat "$BASE/lang" 2>/dev/null)" "en" "English persisted to disk"
+if grep -Eq '[؀-ۿ]' <<<"$out"; then t_fail 'settings output is English-only'; else t_ok 'settings output is English-only'; fi
 
-t_start "--lang fa persists the choice for future runs"
-run_sst --lang fa >/dev/null
-assert_eq "$(cat "$BASE/lang")" "fa" "--lang writes the language file"
+t_start "--lang fa is accepted with an English notice"
+out=$(run_sst --lang fa)
+assert_contains "$out" "Persian CLI is no longer supported; using English." "--lang fa compatibility notice shown"
+assert_eq "$(cat "$BASE/lang")" "en" "--lang fa persists English"
 out=$(run_menu '0')
-assert_contains "$out" "استاراسپید تونل" "persisted language is used on next run"
+assert_contains "$out" "StarSpeed Tunnel" "next run remains English"
+if grep -Eq '[؀-ۿ]' <<<"$out"; then t_fail 'persisted menu is English-only'; else t_ok 'persisted menu is English-only'; fi
 
 t_start "a frontend port already used by another process is refused"
 listen_on 45438

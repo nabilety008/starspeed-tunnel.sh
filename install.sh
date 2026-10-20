@@ -9,36 +9,17 @@ INSTALL_PATH=${SST_INSTALL_PATH:-$INSTALL_DIR/$APP}
 OS_RELEASE=${SST_INSTALL_OS_RELEASE:-/etc/os-release}
 FETCHER=${SST_INSTALL_FETCHER:-auto}
 tmp=''
-LANG_PREF=en
 
 if [[ ${1:-} == --lang ]]; then
   case ${2:-} in
-    en|fa) LANG_PREF=$2 ;;
+    en|fa) ;;
     *) printf 'starspeed-tunnel installer: usage: install.sh [--lang en|fa]\n' >&2; exit 1 ;;
   esac
 fi
 
 msg() {
   local key=$1 detail=${2:-}
-  if [[ $LANG_PREF == fa ]]; then
-    case $key in
-      root) printf 'باید با دسترسی root اجرا شود (از sudo استفاده کنید)' ;;
-      os_meta) printf 'اطلاعات سیستم‌عامل قابل خواندن نیست: %s' "$detail" ;;
-      unsupported) printf 'سیستم‌عامل پشتیبانی نمی‌شود: %s (فقط Ubuntu 22.04/24.04)' "$detail" ;;
-      missing_cmd) printf 'فرمان ضروری پیدا نشد: %s' "$detail" ;;
-      temp) printf 'ساخت فایل موقت امن ممکن نیست' ;;
-      download) printf 'دانلود با %s ناموفق بود' "$detail" ;;
-      downloader) printf 'نصب curl یا wget الزامی است' ;;
-      empty) printf 'فایل دانلودشده خالی است' ;;
-      read) printf 'فایل دانلودشده قابل خواندن نیست' ;;
-      entrypoint) printf 'فایل دانلودشده ورودی معتبر StarSpeed نیست' ;;
-      syntax) printf 'اعتبارسنجی نحوی اسکریپت دانلودشده ناموفق بود' ;;
-      identity) printf 'بررسی هویت اسکریپت دانلودشده ناموفق بود' ;;
-      fetcher) printf 'دانلودکننده نامعتبر است: %s' "$detail" ;;
-      installed) printf 'StarSpeed Tunnel نصب شد: %s' "$detail" ;;
-    esac
-  else
-    case $key in
+  case $key in
       root) printf 'must run as root (use sudo)' ;;
       os_meta) printf 'cannot read OS metadata: %s' "$detail" ;;
       unsupported) printf 'unsupported operating system: %s (supported: Ubuntu 22.04/24.04)' "$detail" ;;
@@ -53,8 +34,7 @@ msg() {
       identity) printf 'downloaded script identity check failed' ;;
       fetcher) printf 'invalid downloader: %s' "$detail" ;;
       installed) printf 'StarSpeed Tunnel installed: %s' "$detail" ;;
-    esac
-  fi
+  esac
 }
 die() { printf 'starspeed-tunnel installer: %s\n' "$(msg "$@")" >&2; exit 1; }
 cleanup() { [[ -z $tmp ]] || rm -f -- "$tmp"; }
@@ -102,8 +82,8 @@ mv -f -- "$tmp" "$INSTALL_PATH"
 tmp=''
 printf '%s\n' "$(msg installed "$INSTALL_PATH")"
 
-# For the bootstrap, --lang selects the initial menu language and still launches
-# the menu. The installed command itself retains its original --lang behaviour.
+# `--lang fa` is passed through for its compatibility notice; the launched menu
+# is English in every case.
 if [[ ${1:-} == --lang ]]; then
   "$INSTALL_PATH" --lang "$2"
   shift 2

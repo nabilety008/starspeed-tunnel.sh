@@ -19,14 +19,14 @@ Client -> پورت Frontend عمومی روی ایران -> HAProxy -> ۴ لای
 جدا، بلوک Lane جدا، کلید SSH جدا، `known_hosts` جدا، state جدا و unitهای `systemd`
 جدا.
 
-نسخه‌ی 1.1.0 منوی کاملاً دوزبانه (انگلیسی/فارسی)، ویزاردهای گام‌به‌گام با خلاصه‌ی
+نسخه‌ی 1.1.0 منوی انگلیسی، ویزاردهای گام‌به‌گام با خلاصه‌ی
 تأیید پیش از اعمال، هدر وضعیت در یک نگاه، و جریان «عیب‌یابی فقط-خواندنی» را اضافه
 می‌کند.
 
 ## ۲. قابلیت‌ها
 
 * **دو ویزارد راهنما** - یکی برای سمت ایران و یکی برای هر سرور Foreign.
-* **رابط دوزبانه** - انگلیسی و فارسی، قابل تغییر در زمان اجرا.
+* **رابط خط فرمان فقط انگلیسی** - برای جلوگیری از مشکل RTL/BiDi در ترمینال SSH.
 * **Setup Code** - یک رشته‌ی base64 کوتاه که تخصیص هر Foreign را حمل می‌کند؛ بدون
   هیچ اطلاعات محرمانه.
 * **چهار لاین Reverse SSH برای هر Foreign** با توزیع `roundrobin` در HAProxy؛ از کار
@@ -83,11 +83,14 @@ inbound مربوط به Xray شما باید از قبل وجود داشته ب�
 
 ## ۶. نصب / دانلود
 
-نصب و اجرای منوی فارسی با یک دستور:
+نصب و اجرای منوی انگلیسی با فرمان سازگار قدیمی:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang fa
 ```
+
+گزینه‌ی `--lang fa` برای سازگاری حفظ شده است، اما یک پیام کوتاه انگلیسی نمایش
+می‌دهد و منوی انگلیسی را اجرا می‌کند. رابط فارسی دیگر ارائه نمی‌شود.
 
 فرمان جایگزین با `wget`:
 
@@ -248,7 +251,7 @@ Status **فقط-خواندنی** است و هرگز محتوای Private Key ر�
 | `5` | Diagnose & Repair - ابتدا بررسی فقط-خواندنی، سپس تعمیر |
 | `6` | Remove Foreign Tunnel - حذف فقط یک Foreign |
 | `7` | Help & Documentation - معماری، پورت‌ها، Setup Code |
-| `8` | Settings & Language - انتخاب انگلیسی یا فارسی |
+| `8` | Settings & Language - اطلاعات رابط انگلیسی |
 | `9` | Uninstall - حذف فقط فایل‌های StarSpeed |
 | `0` | خروج |
 
@@ -259,20 +262,15 @@ sudo ./starspeed-tunnel.sh            # interactive menu
 sudo ./starspeed-tunnel.sh --status   # status only, no changes
 sudo ./starspeed-tunnel.sh --setup-code 1
 sudo ./starspeed-tunnel.sh --role
-sudo ./starspeed-tunnel.sh --lang fa  # set display language
+sudo ./starspeed-tunnel.sh --lang fa  # compatibility notice; uses English
 sudo ./starspeed-tunnel.sh --version
 sudo ./starspeed-tunnel.sh --help     # full option list
 ```
 
-**زبان:** رابط به دو زبان **انگلیسی** و **فارسی** عرضه می‌شود. اولویت در شروع:
-
-1. متغیر محیطی `SST_LANG` (مقدار `en` یا `fa`)؛
-2. تنظیم ذخیره‌شده در `/etc/starspeed-tunnel/lang`؛
-3. locale سیستم (`LC_ALL` / `LANG`، مطابق `fa*`).
-
-هر زمان می‌توانید از **`8) Settings & Language`** یا با `--lang en|fa` زبان را
-تغییر دهید. برچسب‌های منو، ویزارد، وضعیت، راهنما و تنظیمات ترجمه می‌شوند؛ پیام‌های
-تشخیصی سطح‌پایین به انگلیسی می‌مانند تا لاگ‌ها و پشتیبانی یکدست بمانند.
+**زبان:** رابط CLI فقط **انگلیسی** است تا در ترمینال‌های SSH بدون مشکل RTL/BiDi
+نمایش داده شود. `--lang en` عادی کار می‌کند. گزینه‌ی `--lang fa`، تنظیم قدیمی
+`fa`، متغیر `SST_LANG=fa` و locale فارسی پذیرفته می‌شوند، اما خروجی همچنان
+انگلیسی است. فقط مستندات فارسی در همین فایل حفظ شده‌اند.
 
 ## ۱۵. امنیت، فایل‌ها، تست، عیب‌یابی و لایسنس
 

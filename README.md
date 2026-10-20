@@ -17,14 +17,14 @@ Foreign #1 and Foreign #2 are fully independent: separate frontend, separate
 Xray destination, separate lane block, separate SSH key, separate `known_hosts`,
 separate saved state and separate systemd units.
 
-Version 1.1.0 adds a fully bilingual menu (English / Persian), step-by-step
+Version 1.1.0 adds an English interactive menu, step-by-step
 setup wizards with a confirmation summary before anything is applied, an
 at-a-glance status header, and a read-only-first diagnose & repair flow.
 
 ## 1. Features
 
 * **Two guided wizards** - one for the Iran side, one for each foreign server.
-* **Bilingual interface** - English and Persian (Farsi), switchable at runtime.
+* **English-only CLI** - avoids RTL/BiDi rendering problems in SSH terminals.
 * **Setup codes** - a short base64 string carries each foreign's allocation; no
   secrets inside.
 * **Four reverse-SSH lanes per foreign** with HAProxy round-robin failover.
@@ -66,11 +66,14 @@ installer offers to install missing packages via `apt-get`.
 
 ## 4. Install / Download
 
-Install and open the Persian interactive menu with one command:
+Install and open the interactive English menu with one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main/install.sh | sudo bash -s -- --lang fa
 ```
+
+`--lang fa` is retained for backward compatibility. It prints a short English
+notice and launches the English menu; Persian CLI output is no longer provided.
 
 With `wget` instead:
 
@@ -217,7 +220,7 @@ can:
 | `5` | Diagnose & Repair - read-only checks first, then repair |
 | `6` | Remove Foreign Tunnel - remove one foreign only |
 | `7` | Help & Documentation - architecture, ports, setup codes |
-| `8` | Settings & Language - choose English or Persian |
+| `8` | Settings & Language - English interface information |
 | `9` | Uninstall - remove only StarSpeed-managed files |
 | `0` | Exit |
 
@@ -228,23 +231,19 @@ sudo ./starspeed-tunnel.sh            # interactive menu
 sudo ./starspeed-tunnel.sh --status   # status only, no changes
 sudo ./starspeed-tunnel.sh --setup-code 1
 sudo ./starspeed-tunnel.sh --role
-sudo ./starspeed-tunnel.sh --lang fa  # set display language
+sudo ./starspeed-tunnel.sh --lang fa  # compatibility notice; uses English
 sudo ./starspeed-tunnel.sh --version
 sudo ./starspeed-tunnel.sh --help     # full option list
 ```
 
 ## 13. Language
 
-The interface ships in **English** and **Persian**. Priority at startup:
-
-1. the `SST_LANG` environment variable (`en` or `fa`);
-2. the saved setting in `/etc/starspeed-tunnel/lang`;
-3. the system locale (`LC_ALL` / `LANG`, matching `fa*`).
-
-Switch languages any time from **`8) Settings & Language`**, or with
-`--lang en|fa`. Menu, wizard, status, help and settings labels are translated;
-low-level diagnostic messages stay in English so logs and support remain
-consistent.
+The CLI is **English-only**. Menus, prompts, status, diagnostics, warnings and
+errors always use English so output renders consistently in SSH terminals.
+`--lang en` works normally. For backward compatibility, `--lang fa`, a saved
+legacy `fa` preference, `SST_LANG=fa`, or a Persian system locale are accepted
+but still use English; explicit `--lang fa` prints a short English notice.
+Persian documentation remains available in `README.fa.md`.
 
 ## 14. Safety properties
 

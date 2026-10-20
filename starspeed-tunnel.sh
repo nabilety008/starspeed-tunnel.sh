@@ -69,43 +69,30 @@ die()   { err "$*"; exit 1; }
 hr() { printf '%s\n' "------------------------------------------------------------"; }
 
 # ---------------------------------------------------------------------------
-# Internationalisation (English default, Persian optional)
+# Interface language (English only)
 # ---------------------------------------------------------------------------
-# Centralised lookup: every user-facing label is a key into MSG_EN / MSG_FA.
-# Technical values (IPs, ports, paths, commands) stay inside the format string
-# so they remain LTR-friendly inside Persian sentences. English is the fallback
-# for any key a translation omits, and for unsupported locales.
+# Centralised lookup keeps user-facing text separate from application logic.
+# `--lang fa` remains accepted for compatibility, but always selects English.
 LANG_PREF=en
 LANG_FILE=''   # set in lang_init once SST_BASE is known
 
-declare -A MSG_EN=() MSG_FA=()
+declare -A MSG_EN=()
 
 t() {  # t key [printf-args...]
   local key=$1; shift
   local tmpl
-  if [[ $LANG_PREF == fa ]]; then tmpl=${MSG_FA[$key]:-${MSG_EN[$key]:-$key}}
-  else tmpl=${MSG_EN[$key]:-$key}; fi
+  tmpl=${MSG_EN[$key]:-$key}
   if (( $# )); then printf "$tmpl" "$@"; else printf '%s' "$tmpl"; fi
 }
 
 lang_init() {
   LANG_FILE=$SST_BASE/lang
-  if [[ -n ${SST_LANG:-} ]]; then
-    LANG_PREF=$SST_LANG
-  elif [[ -f $LANG_FILE ]]; then
-    LANG_PREF=$(head -n1 "$LANG_FILE" 2>/dev/null)
-  else
-    case ${LC_ALL:-${LANG:-}} in
-      fa|fa_*|fa-*) LANG_PREF=fa ;;
-      *)            LANG_PREF=en ;;
-    esac
-  fi
-  [[ $LANG_PREF == fa || $LANG_PREF == en ]] || LANG_PREF=en
+  LANG_PREF=en
 }
 
 lang_save() {
   ensure_owned_dir "$SST_BASE" 700 || return 1
-  printf '%s\n' "$1" >"$LANG_FILE"
+  printf '%s\n' en >"$LANG_FILE"
   chmod 600 "$LANG_FILE" 2>/dev/null || true
 }
 
@@ -140,8 +127,9 @@ MSG_EN=(
   [settings.current]='Current language'
   [settings.choose]='Choose display language'
   [settings.en]='English'
-  [settings.fa]='Persian (Farsi)'
+  [settings.fa]='Persian (unsupported; use English)'
   [settings.saved]='Language saved'
+  [settings.fa_removed]='Persian CLI is no longer supported; using English.'
   [settings.back]='Back'
 
   [help.title]='Help & Documentation'
@@ -219,118 +207,6 @@ MSG_EN=(
   [repair.foreign_side]='Repairing the foreign side'
   [repair.nothing]='nothing to repair'
   [repair.propose]='Proposed changes will be listed before anything is applied.'
-)
-
-# --- Persian table ---------------------------------------------------------
-MSG_FA=(
-  [menu.title]='استاراسپید تونل'
-  [menu.role]='نقش این سرور'
-  [menu.select]='انتخاب'
-  [menu.invalid]='انتخاب نامعتبر: %s'
-  [menu.1]='راه‌اندازی سرور ایران'
-  [menu.2]='راه‌اندازی سرور خارج'
-  [menu.3]='مجوز کلید SSH سرور خارج'
-  [menu.4]='وضعیت تونل'
-  [menu.5]='عیب‌یابی و تعمیر'
-  [menu.6]='حذف تونل سرور خارج'
-  [menu.7]='راهنما و مستندات'
-  [menu.8]='تنظیمات و زبان'
-  [menu.9]='حذف کامل نصب'
-  [menu.0]='خروج'
-  [hint.1]='ساخت frontendها و لین‌های معکوس SSH در ایران'
-  [hint.2]='اتصال این سرور خارج به ایران (با کد راه‌اندازی)'
-  [hint.3]='افزودن کلید عمومی SSH سرور خارج به ایران'
-  [hint.4]='نمایش تونل‌ها، پورت‌ها، لین‌ها و سلامت سرویس‌ها'
-  [hint.5]='اجرای بررسی‌های فقط-خواندنی، سپس تعمیر موارد خراب'
-  [hint.6]='حذف یک تونل سرور خارج (Xray / 3x-ui دست نمی‌خورد)'
-  [hint.7]='معماری، پورت‌ها، کدهای راه‌اندازی و رفع مشکل'
-  [hint.8]='انتخاب زبان نمایش'
-  [hint.9]='حذف کامل استاراسپید تونل از این سرور'
-  [hint.0]='خروج از این منو'
-
-  [settings.title]='تنظیمات و زبان'
-  [settings.current]='زبان فعلی'
-  [settings.choose]='زبان نمایش را انتخاب کنید'
-  [settings.en]='انگلیسی'
-  [settings.fa]='فارسی'
-  [settings.saved]='زبان ذخیره شد'
-  [settings.back]='بازگشت'
-
-  [help.title]='راهنما و مستندات'
-  [help.arch]='معماری: کلاینت -> پورت frontend در ایران -> HAProxy -> ۴ لین معکوس SSH -> سرور خارج -> ورودی Xray'
-  [help.ports]='پورت‌ها: هر سرور خارج یک frontend عمومی در ایران، یک ورودی Xray روی خودش، و ۴ پورت لین در ایران می‌گیرد.'
-  [help.code]='کد راه‌اندازی: یک رشته base64 حامل تخصیص پورت‌ها. رمز عبور یا کلید خصوصی ندارد.'
-  [help.security]='این ابزار فقط Xray / 3x-ui را می‌خواند. هرگز بررسی کلید میزبان را غیرفعال نمی‌کند و هیچ رمزی در کد راه‌اندازی ذخیره نمی‌کند.'
-  [help.full]='مستندات کامل: README.md (انگلیسی) و README.fa.md (فارسی).'
-
-  [iran.title]='راه‌اندازی سرور ایران'
-  [iran.intro]='این مرحله روی سرور ایران اجرا می‌شود. frontendهای HAProxy می‌سازد و لین‌های معکوس SSH برای هر سرور خارج تخصیص می‌دهد.'
-  [iran.existing]='پیکربندی موجود: سرور(های) خارج %s. تخصیص پورت‌های موجود بدون تغییر استفاده می‌شود.'
-  [iran.foreign_count]='چند سرور خارج از طریق ایران تونل می‌شود؟'
-  [iran.foreign_title]='سرور خارج #%s'
-  [iran.kept]='سرور خارج #%s قبلاً پیکربندی شده - بدون تغییر باقی می‌ماند'
-  [iran.frontend_prompt]='پورت frontend عمومی در ایران برای سرور خارج #%s'
-  [iran.inbound_prompt]='پورت ورودی Xray روی سرور خارج #%s (هدف لین)'
-  [iran.same_port]='frontend و پورت Xray یک عدد دارند؛ این مجاز است (میزبان‌های متفاوت)'
-  [iran.lanes]='لین‌های تخصیص‌یافته: %s'
-  [iran.summary]='خلاصه پیکربندی'
-  [iran.confirm_apply]='این پیکربندی HAProxy اعمال شود؟'
-  [iran.applying]='در حال اعمال پیکربندی HAProxy'
-  [iran.configured]='ایران پیکربندی شد'
-  [iran.code_header]='کدهای راه‌اندازی - هر کدام را به سرور خارج خودش منتقل کنید (بدون رمز داخل آن)'
-  [iran.next_steps]='روی هر سرور خارج اجرا کنید: sudo ./$APP سپس گزینه ۲ را انتخاب و کد را جای‌گذاری کنید.'
-  [iran.authorize_hint]='پس از نمایش کلید عمومی سرور خارج، آن را اینجا با گزینه ۳ مجاز کنید.'
-
-  [foreign.title]='راه‌اندازی سرور خارج'
-  [foreign.intro]='این مرحله روی سرور خارج اجرا می‌شود. این میزبان را با لین‌های معکوس SSH به ایران وصل می‌کند. هرگز Xray یا 3x-ui را تغییر نمی‌دهد.'
-  [foreign.code_prompt]='کد راه‌اندازی ساخته‌شده در سرور ایران را جای‌گذاری کنید'
-  [foreign.code_ok]='کد راه‌اندازی پذیرفته شد (سرور خارج #%s)'
-  [foreign.code_bad]='کد راه‌اندازی نامعتبر یا ناخواناست'
-  [foreign.already]='سرور خارج #%s قبلاً روی این سرور پیکربندی شده است'
-  [foreign.reoverwrite]='راه‌اندازی دوباره سرور خارج #%s و بازنویسی تنظیمات ذخیره‌شده؟'
-  [foreign.unchanged]='بدون تغییر ماند. به‌جای آن از گزینه ۴ (وضعیت) یا ۵ (تعمیر) استفاده کنید.'
-  [foreign.ip_prompt]='آدرس IP یا نام میزبان سرور ایران'
-  [foreign.ip_from_code]='استفاده از آدرس ایران داخل کد راه‌اندازی'
-  [foreign.summary]='خلاصه پیکربندی'
-  [foreign.confirm_apply]='این پیکربندی اعمال شود؟'
-  [foreign.xray_ok]='ورودی Xray روی 127.0.0.1:%s در حال گوش‌دادن است'
-  [foreign.xray_missing]='چیزی روی 127.0.0.1:%s در حال گوش‌دادن نیست (انتظار: ورودی Xray / 3x-ui موجود شما)'
-  [foreign.continue_anyway']='ادامه داده شود؟ لین تا گوش‌دادن Xray خاموش می‌ماند.'
-  [foreign.pubkey_header]='کلید عمومی - این را در ایران مجاز کنید (گزینه ۳)'
-  [foreign.next_steps]='%s/۴ لین فعال است. این اسکریپت Xray یا 3x-ui را تغییر نمی‌دهد.'
-  [foreign.lane_status]='وضعیت لین‌ها'
-
-  [status.title]='وضعیت استاراسپید تونل'
-  [status.role]='نقش'
-  [status.version]='نسخه'
-  [status.foreigns]='سرورهای خارج پیکربندی‌شده'
-  [status.none]='هنوز تونلی پیکربندی نشده است.'
-  [status.none_hint]='در ایران گزینه ۱ و در سرور خارج گزینه ۲ را انتخاب کنید.'
-  [status.haproxy]='HAProxy'
-  [status.haproxy_cfg]='پیکربندی HAProxy'
-  [status.frontend]='فرانت‌اند'
-  [status.frontend_listener]='شنونده فرانت‌اند'
-  [status.xray_dest]='مقصد Xray'
-  [status.ssh_auth]='کلیدهای مجاز SSH'
-  [status.known_hosts]='کلید میزبان ایران (known_hosts)'
-  [status.overall]='کلی'
-  [status.ready]='آماده'
-  [status.degraded]='کاهش‌یافته'
-  [status.unknown]='نامشخص'
-  [status.up]='فعال'
-  [status.down]='غیرفعال'
-  [status.listening]='در حال گوش‌دادن'
-  [status.not_listening]='در حال گوش‌دادن نیست'
-  [status.valid]='معتبر'
-  [status.invalid]='نامعتبر'
-  [status.entries]='%s مورد'
-
-  [repair.title]='عیب‌یابی و تعمیر'
-  [repair.readonly]='ابتدا بررسی‌های فقط-خواندنی اجرا می‌شود. تا تأیید شما چیزی تغییر نمی‌کند.'
-  [repair.iran_side]='تعمیر سمت ایران'
-  [repair.foreign_side]='تعمیر سمت سرور خارج'
-  [repair.nothing]='چیزی برای تعمیر نیست'
-  [repair.propose']='تغییرات پیشنهادی پیش از اعمال فهرست می‌شوند.'
 )
 
 # ---------------------------------------------------------------------------
@@ -2048,7 +1924,7 @@ usage: $APP [options]
   --status            print status and exit
   --setup-code N      print the setup code for foreign #N and exit
   --role              print this host's role (iran / foreign / unknown)
-  --lang en|fa        set the display language and exit
+  --lang en|fa        select English; fa is accepted for compatibility
   --version           print version
   --help              this text
 
@@ -2118,7 +1994,7 @@ menu_settings() {
   prompt_read c "$(t menu.select)" 0
   case $c in
     1) lang_save en && LANG_PREF=en; ok "$(t settings.saved): $(t settings.en)" ;;
-    2) lang_save fa && LANG_PREF=fa; ok "$(t settings.saved): $(t settings.fa)" ;;
+    2) lang_save en && LANG_PREF=en; warn "$(t settings.fa_removed)" ;;
     0|"") ;;
     *) warn "$(t menu.invalid "$c")" ;;
   esac
@@ -2131,10 +2007,14 @@ main() {
     --role)       get_role; return 0 ;;
     --lang)
       case ${2:-} in
-        en|fa) printf '%s\n' "$2" >"${SST_BASE:-/etc/$APP}/lang" 2>/dev/null \
+        en) printf '%s\n' en >"${SST_BASE:-/etc/$APP}/lang" 2>/dev/null \
                  || { mkdir -p "${SST_BASE:-/etc/$APP}" 2>/dev/null \
-                      && printf '%s\n' "$2" >"${SST_BASE:-/etc/$APP}/lang"; }
-               printf '%s %s\n' "$APP" "language set to $2"; return 0 ;;
+                      && printf '%s\n' en >"${SST_BASE:-/etc/$APP}/lang"; }
+               printf '%s %s\n' "$APP" 'language set to en'; return 0 ;;
+        fa) printf '%s\n' en >"${SST_BASE:-/etc/$APP}/lang" 2>/dev/null \
+                 || { mkdir -p "${SST_BASE:-/etc/$APP}" 2>/dev/null \
+                      && printf '%s\n' en >"${SST_BASE:-/etc/$APP}/lang"; }
+            printf '%s\n' 'Persian CLI is no longer supported; using English.'; return 0 ;;
         *) die "usage: $APP --lang en|fa" ;;
       esac
       ;;
