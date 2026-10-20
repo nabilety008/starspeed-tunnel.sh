@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Minimal fake HAProxy used by the test suite.
 #
-# -c   : validate the config. Fails if any include target is missing, if an
-#        include points at a nonexistent file, if the file contains the marker
-#        string FAILVALIDATE, or if it references an unknown "bind" port that
-#        the test marked as forbidden.
+# -c   : validate the config. Fails if the file contains an `include` line
+#        (HAProxy has no include keyword in ANY section: `include` always comes
+#        back as an unknown keyword, exactly like the real 3.2 parser), if a
+#        keyword appears before the first section, if the file contains the
+#        marker string FAILVALIDATE, or if it references an unknown "bind" port
+#        that the test marked as forbidden.
 # --version / -v : report a version.
 set -uo pipefail
 
 FAKE_FORBIDDEN_PORTS=${FAKE_HAPROXY_FORBIDDEN_PORTS:-}
-declare -a matches=()
 
 if [[ ${1:-} == "--version" || ${1:-} == "-v" ]]; then
-  echo "HAProxy fake 2.8-test"
+  echo "HAProxy fake 3.2-test"
   exit 0
 fi
 
@@ -38,35 +39,51 @@ if grep -q 'FAILVALIDATE' "$cfg"; then
   exit 1
 fi
 
-# Resolve every include; a missing fragment is a config error. HAProxy expands
-# glob patterns, so a glob that matches nothing is an error but a glob that
-# matches at least one file is fine.
-while read -r inc; do
-  if [[ $inc == *[*?]* ]]; then
-    # compgen -G performs the glob without unquoted word splitting.
-    matches=()
-    mapfile -t matches < <(compgen -G "$inc")
-    (( ${#matches[@]} )) || {
-      echo "[ALERT] cannot read include file '$inc'" >&2
-      exit 1
-    }
-    for m in "${matches[@]}"; do
-      if grep -q 'FAILVALIDATE' "$m"; then
-        echo "[ALERT] parse error in included file '$m'" >&2
-        exit 1
-      fi
-    done
+# Walk the file the way the real parser does: sections are sticky (a section
+# only ends on the next section keyword or on end of file), comments and blank
+# lines are delimiters, and a keyword is only legal once a section has started.
+# `include` is not a keyword anywhere, so it is rejected in every context with
+# the same messages the real binary emits.
+section=""
+lineno=0
+fatal=0
+while IFS= read -r line || [[ -n $line ]]; do
+  lineno=$((lineno + 1))
+  # Strip leading whitespace; HAProxy does not care about indentation.
+  trimmed=${line#"${line%%[![:space:]]*}"}
+  [[ -z $trimmed || $trimmed == \#* ]] && continue
+  kw=${trimmed%%[[:space:]]*}
+
+  if [[ $kw == include ]]; then
+    if [[ -z $section ]]; then
+      echo "[ALERT] parsing [$cfg:$lineno] : unknown keyword 'include' out of section." >&2
+    else
+      echo "[ALERT] parsing [$cfg:$lineno] : unknown keyword 'include' in '$section' section" >&2
+    fi
+    fatal=1
     continue
   fi
-  if [[ ! -f $inc ]]; then
-    echo "[ALERT] cannot read include file '$inc'" >&2
-    exit 1
+
+  # A section keyword opens (or re-opens) a section and is legal anywhere,
+  # including as the very first line of the file.
+  case $kw in
+    global|defaults|frontend|backend|listen|cache|program|peers|resolvers|mailers|fcgi-app|log-forward|userlist)
+      section=$kw
+      continue
+      ;;
+  esac
+
+  if [[ -z $section ]]; then
+    echo "[ALERT] parsing [$cfg:$lineno] : unknown keyword '$kw' out of section." >&2
+    fatal=1
+    continue
   fi
-  if grep -q 'FAILVALIDATE' "$inc"; then
-    echo "[ALERT] parse error in included file '$inc'" >&2
-    exit 1
-  fi
-done < <(awk '/^[[:space:]]*include[[:space:]]/ {print $2}' "$cfg")
+done <"$cfg"
+
+if (( fatal )); then
+  echo "Fatal errors found in configuration." >&2
+  exit 1
+fi
 
 if [[ -n $FAKE_FORBIDDEN_PORTS ]]; then
   for p in ${FAKE_FORBIDDEN_PORTS//,/ }; do

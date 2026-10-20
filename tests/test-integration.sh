@@ -25,8 +25,10 @@ out=$(run_menu "$(iran_answers 1 45438 45438)")
 assert_file "$HC" "haproxy.cfg created"
 assert_file "$FRAG1" "Foreign #1 fragment created"
 assert_no_file "$FRAG2" "no Foreign #2 fragment yet"
-assert_contains "$(cat "$HC")" "include $FRAG1" "top-level config includes the fragment"
+assert_contains "$(cat "$HC")" "frontend starspeed-tunnel_f1" "fragment content inlined into the top-level config"
+assert_no_grep "$HC" '^[[:space:]]*include[[:space:]]' "no include lines (haproxy has no include keyword)"
 assert_contains "$(cat "$HC")" "starspeed-tunnel managed includes" "managed block is delimited"
+assert_contains "$out" "haproxy -c passed validation" "complete candidate validated before activation"
 
 t_start "fragment has one frontend, one backend and four distinct lanes"
 frag=$(cat "$FRAG1")
@@ -68,7 +70,7 @@ before_hc=$(cat "$HC"); before_frag=$(cat "$FRAG1")
 run_menu "$(iran_answers 1 45438 45438)" >/dev/null
 assert_eq "$(cat "$HC")" "$before_hc" "haproxy.cfg byte-identical on re-run"
 assert_eq "$(cat "$FRAG1")" "$before_frag" "fragment byte-identical on re-run"
-assert_eq "$(grep -c 'include ' "$HC")" "1" "no duplicate include lines"
+assert_no_grep "$HC" '^[[:space:]]*include[[:space:]]' "still no include lines after the re-run"
 assert_eq "$(grep -c 'managed includes' "$HC")" "2" "exactly one begin/end marker pair"
 
 t_start "re-run does not consume a fresh port allocation"
@@ -77,11 +79,14 @@ assert_eq "$(lanes_of 1)" "46101 46102 46103 46104 " "stored lanes are preserved
 t_start "setup preserves unrelated HAProxy configuration"
 mkdir -p "$HAPROXY_DIR/conf.d"
 printf 'frontend operator_owned\n    bind :9999\n' >"$HAPROXY_DIR/conf.d/operator.cfg"
-OPERATOR_INCLUDE="include $HAPROXY_DIR/conf.d/*.cfg"
-printf '%s\n' "$OPERATOR_INCLUDE" >>"$HC"
+# HAProxy has no include keyword at all, so the operator-owned line is an
+# ordinary comment: valid wherever the managed block puts it, and it must
+# survive every rebuild untouched.
+OPERATOR_LINE='# operator-owned line appended to haproxy.cfg'
+printf '%s\n' "$OPERATOR_LINE" >>"$HC"
 run_menu "$(iran_answers 1 45438 45438)" >/dev/null
-assert_file "$HAPROXY_DIR/conf.d/operator.cfg" "operator include untouched"
-assert_contains "$(cat "$HC")" "$OPERATOR_INCLUDE" "operator's own include line survived"
+assert_file "$HAPROXY_DIR/conf.d/operator.cfg" "operator config file untouched"
+assert_contains "$(cat "$HC")" "$OPERATOR_LINE" "operator's own line survived"
 
 # ---------------------------------------------------------------------------
 t_start "adding Foreign #2 leaves Foreign #1 byte-identical"
@@ -90,7 +95,7 @@ before1=$(cat "$FRAG1")
 run_menu "$(iran_answers 2 45439 45439)" >/dev/null
 assert_file "$FRAG2" "Foreign #2 fragment created"
 assert_contains "$(cat "$FRAG2")" "bind 0.0.0.0:45439" "#2 frontend uses the second port"
-assert_contains "$(cat "$HC")" "include $FRAG2" "top-level config now includes both"
+assert_contains "$(cat "$HC")" "bind 0.0.0.0:45439" "top-level config now carries both foreigns"
 assert_eq "$(cat "$FRAG1")" "$before1" "Foreign #1 fragment unchanged"
 
 t_start "the two foreigns share no ports at all"
@@ -198,13 +203,35 @@ FRAG2=$HAPROXY_DIR/foreign-2.cfg
 UNIT1=$SD/starspeed-tunnel-f1-lane1.service
 AUTH=$SSH_DIR/authorized_keys
 
-# Recreate the operator-owned HAProxy include so uninstall can prove it keeps it.
-OPERATOR_INCLUDE="include $HAPROXY_DIR/conf.d/*.cfg"
+# Recreate the operator-owned config so uninstall can prove it keeps it.
+OPERATOR_LINE='# operator-owned line appended to haproxy.cfg'
 mkdir -p "$HAPROXY_DIR/conf.d"
 printf 'frontend operator_owned\n    bind :9999\n' >"$HAPROXY_DIR/conf.d/operator.cfg"
 
 t_start "Iran is reconfigured with both foreigns"
 run_menu "$(iran_answers 2 45438 45438 45439 45439)" >/dev/null
+
+t_start "a legacy include-based managed block migrates to inlined sections"
+# Recreate exactly what an older install left behind: a managed block holding
+# include directives, which HAProxy 3.2 rejects in every section.
+{
+  printf 'global\n    log /dev/log local0\n    maxconn 10000\n\n'
+  printf 'defaults\n    log global\n    mode tcp\n    option tcplog\n'
+  printf '    timeout connect 5s\n    timeout client 2m\n    timeout server 2m\n\n'
+  printf '%s\n' '# >>> starspeed-tunnel managed includes >>>'
+  printf 'include %s\n' "$FRAG1"
+  printf 'include %s\n' "$FRAG2"
+  printf '%s\n' '# <<< starspeed-tunnel managed includes <<<'
+} >"$HC"
+out=$(run_menu "$(printf '5\ny\nn\nn\n')")
+assert_contains "$out" "does not validate" "the legacy config is detected as invalid"
+assert_contains "$out" "haproxy -c passed validation" "the migrated config validates before activation"
+assert_no_grep "$HC" '^[[:space:]]*include[[:space:]]' "legacy include lines are gone"
+assert_contains "$(cat "$HC")" "bind 0.0.0.0:45438" "foreign #1 frontend inlined"
+assert_contains "$(cat "$HC")" "bind 0.0.0.0:45439" "foreign #2 frontend inlined"
+assert_eq "$(grep -c 'managed includes' "$HC")" "2" "exactly one begin/end marker pair after migration"
+assert_file "$FRAG1" "fragment files kept for repair/status tooling"
+assert_file "$FRAG2" "fragment files kept for repair/status tooling"
 
 t_start "authorizing a foreign public key via menu 3 is idempotent"
 mkdir -p "$SSH_DIR"
@@ -235,7 +262,9 @@ rm -f "$probe"
 t_start "Iran still has both foreigns configured"
 assert_file "$FRAG1" "Foreign #1 fragment present"
 assert_file "$FRAG2" "Foreign #2 fragment present"
-assert_eq "$(grep -c 'include ' "$HC")" "2" "both fragments included"
+assert_no_grep "$HC" '^[[:space:]]*include[[:space:]]' "no include lines in the live config"
+assert_contains "$(cat "$HC")" "bind 0.0.0.0:45438" "foreign #1 frontend in the live config"
+assert_contains "$(cat "$HC")" "bind 0.0.0.0:45439" "foreign #2 frontend in the live config"
 
 # ---------------------------------------------------------------------------
 t_start "status reports lanes without leaking secrets"
@@ -268,7 +297,7 @@ run_menu "$(printf '5\ny\nn\nn\n')" >/dev/null
 assert_file "$FRAG2" "repair regenerated the missing fragment"
 assert_file "$FRAG1" "repair kept Foreign #1"
 assert_contains "$(cat "$FRAG2")" "bind 0.0.0.0:45439" "regenerated fragment kept the right frontend"
-assert_contains "$(cat "$HC")" "include $FRAG2" "rebuilt config includes the restored fragment"
+assert_contains "$(cat "$HC")" "bind 0.0.0.0:45439" "rebuilt config carries the restored fragment"
 
 t_start "repair is safe to run twice"
 f1=$(cat "$FRAG1"); f2=$(cat "$FRAG2")
@@ -277,28 +306,34 @@ assert_eq "$(cat "$FRAG1")" "$f1" "second repair left Foreign #1 alone"
 assert_eq "$(cat "$FRAG2")" "$f2" "second repair left Foreign #2 alone"
 
 # ---------------------------------------------------------------------------
-t_start "an invalid HAProxy candidate is never activated"
-hc_before=$(cat "$HC")
+t_start "an invalid HAProxy configuration is never replaced blindly"
 frag_before=$(cat "$FRAG2")
-# FAILVALIDATE makes the fake 'haproxy -c' reject the candidate.
-printf '    # FAILVALIDATE\n' >>"$FRAG2"
-out=$(run_menu "$(printf '5\ny\n')")
+# Poison the live config itself and remove every backup: repair must report the
+# failure and, when the rebuild is declined, change nothing at all.
+printf '    # FAILVALIDATE\n' >>"$HC"
+hc_before=$(cat "$HC")   # poisoned state - must remain byte-identical
+rm -f -- "$BACKUP"/*
+out=$(run_menu "$(printf '5\nn\nn\nn\n')")
 assert_contains "$out" "does not validate" "repair reports the broken live config"
-assert_eq "$(cat "$HC")" "$hc_before" "live config untouched when validation fails"
+assert_eq "$(cat "$HC")" "$hc_before" "live config untouched when the rebuild is declined"
+assert_eq "$(cat "$FRAG2")" "$frag_before" "fragment untouched when the rebuild is declined"
 
-t_start "repair recovers once the fragment is fixed"
-grep -v 'FAILVALIDATE' "$FRAG2" >"$FRAG2.tmp" && mv "$FRAG2.tmp" "$FRAG2"
-run_menu "$(printf '5\nn\nn\nn\n')" >/dev/null
-assert_eq "$(cat "$FRAG2")" "$frag_before" "fragment restored after the fix"
-assert_contains "$(cat "$HC")" "include $FRAG2" "live config includes both foreigns again"
+t_start "repair recovers once the live configuration is fixed"
+grep -v 'FAILVALIDATE' "$HC" >"$HC.tmp" && mv "$HC.tmp" "$HC"
+rm -f "$FRAG2"
+out=$(run_menu "$(printf '5\ny\nn\nn\n')")
+assert_not_contains "$out" "does not validate" "the fixed configuration validates"
+assert_file "$FRAG2" "repair regenerated the missing fragment"
+assert_eq "$(cat "$FRAG2")" "$frag_before" "regenerated fragment matches the original"
+assert_contains "$(cat "$HC")" "bind 0.0.0.0:45439" "live config carries both foreigns again"
 
 t_start "a backup exists whenever the config was rewritten"
 assert_ne "$(ls -1 "$BACKUP" 2>/dev/null | wc -l)" "0" "at least one backup was written"
 
-# The operator's own include is appended only now, so earlier assertions that
-# count include lines see exactly the two managed fragments.
-printf '%s\n' "$OPERATOR_INCLUDE" >>"$HC"
-assert_contains "$(cat "$HC")" "$OPERATOR_INCLUDE" "operator include coexists with the managed block"
+# The operator's own line is appended only now, so earlier assertions that
+# inspect the managed block see exactly the two inlined foreigns.
+printf '%s\n' "$OPERATOR_LINE" >>"$HC"
+assert_contains "$(cat "$HC")" "$OPERATOR_LINE" "operator line coexists with the managed block"
 
 # ---------------------------------------------------------------------------
 # Removal runs on the Iran host; the Foreign lane units live on the foreign
@@ -309,8 +344,8 @@ run_menu "$(printf '6\n2\ny\n')" >/dev/null
 assert_no_file "$FRAG2" "Foreign #2 fragment removed"
 assert_no_file "$STATE/foreign-2.env" "Foreign #2 state removed"
 assert_eq "$(cat "$FRAG1")" "$one_before" "Foreign #1 fragment untouched"
-assert_contains "$(cat "$HC")" "include $FRAG1" "Foreign #1 still included"
-assert_not_contains "$(cat "$HC")" "include $FRAG2" "Foreign #2 include removed"
+assert_contains "$(cat "$HC")" "bind 0.0.0.0:45438" "Foreign #1 still inlined"
+assert_not_contains "$(cat "$HC")" "bind 0.0.0.0:45439" "Foreign #2 frontend removed from the live config"
 
 t_start "removal requires confirmation"
 run_menu "$(printf '6\n1\nn\n')" >/dev/null
@@ -330,6 +365,20 @@ assert_file "$FRAG2" "Foreign #2 recreated"
 assert_eq "$(front_of 1)" "45438" "Foreign #1 kept its original frontend"
 assert_ne "$(front_of 1)" "$(front_of 2)" "frontends are still distinct"
 
+t_start "Setup Iran works in the same menu session as Uninstall"
+# Regression for the missing-state-directory crash: uninstall rmdir's the state
+# directory, and a single process must still be able to run Setup Iran right
+# afterwards (the crash only happens within one menu session).
+# Answers: 7 + three confirms (uninstall, backups, ssh keypair), then the
+# Iran setup answers, then the trailing menu exit.
+out=$(run_menu "$(printf '7\ny\nn\nn\n%s' "$(iran_answers 1 45438 45438)")")
+assert_file "$STATE/foreign-1.env" "state re-created after uninstall in the same session"
+assert_file "$STATE/role" "role re-created after uninstall in the same session"
+assert_file "$HC" "haproxy config still present after the re-setup"
+assert_contains "$(cat "$HC")" "bind 0.0.0.0:45438" "frontend re-inlined after the re-setup"
+assert_no_grep "$HC" '^[[:space:]]*include[[:space:]]' "no include lines after the re-setup"
+assert_contains "$out" "haproxy -c passed validation" "rebuilt config validated before activation"
+
 # ---------------------------------------------------------------------------
 t_start "uninstall is declined safely"
 cfg_before=$(cat "$HC")
@@ -344,10 +393,10 @@ run_menu "$(printf '7\ny\nn\n')" >/dev/null
 assert_no_file "$FRAG1" "#1 fragment removed"
 assert_no_file "$FRAG2" "#2 fragment removed"
 assert_no_file "$UNIT1" "lane unit removed"
-assert_file "$HAPROXY_DIR/conf.d/operator.cfg" "operator include preserved"
+assert_file "$HAPROXY_DIR/conf.d/operator.cfg" "operator config file preserved"
 if [[ -f $HC ]]; then
   assert_not_contains "$(cat "$HC")" "starspeed-tunnel managed includes" "managed block stripped"
-  assert_contains "$(cat "$HC")" "$OPERATOR_INCLUDE" "operator config still intact"
+  assert_contains "$(cat "$HC")" "$OPERATOR_LINE" "operator config still intact"
 fi
 
 t_start "uninstall never touches Xray or 3x-ui state"

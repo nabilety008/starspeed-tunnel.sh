@@ -364,7 +364,21 @@ state_file() { printf '%s/foreign-%s.env' "$SST_STATE" "$1"; }
 
 role_file()  { printf '%s/role' "$SST_STATE"; }
 
+# Create a directory this script owns, with its conventional permissions, and
+# fail loudly if that is not possible. "Uninstall" removes the state and
+# fragment directories during the same menu session, so every writer re-creates
+# its own directory instead of assuming it survived from process start-up.
+ensure_owned_dir() {
+  local d=$1 mode=${2:-700}
+  [[ -d $d ]] && return 0
+  mkdir -p -- "$d" || { err "could not create directory: $d"; return 1; }
+  chmod "$mode" "$d" || { err "could not set permissions on $d: mode $mode"; return 1; }
+  log "directory recreated: $d mode=$mode"
+  return 0
+}
+
 set_role() {
+  ensure_owned_dir "$SST_STATE" 700 || return 1
   printf '%s\n' "$1" >"$(role_file)"
   chmod 600 "$(role_file)"
 }
@@ -375,11 +389,16 @@ get_role() {
 
 # Only these keys are ever written, and every value is a validated integer or a
 # validated host. Nothing user-supplied is passed through eval/`source`.
+# The file is written to a temporary name first and moved into place, so an
+# interrupted write can never leave a half-populated state file behind, and the
+# state directory is re-created on demand (see ensure_owned_dir).
 write_state() {
   local idx=$1 frontend=$2 inbound=$3
   shift 3
-  local lanes=("$@") f
+  local lanes=("$@") f tmp
+  ensure_owned_dir "$SST_STATE" 700 || return 1
   f=$(state_file "$idx")
+  tmp=$f.tmp.$$
   {
     printf 'FOREIGN=%s\n' "$idx"
     printf 'FRONTEND=%s\n' "$frontend"
@@ -388,8 +407,9 @@ write_state() {
     for j in 1 2 3 4; do
       printf 'LANE%s=%s\n' "$j" "${lanes[j-1]}"
     done
-  } >"$f"
-  chmod 600 "$f"
+  } >"$tmp" || { rm -f -- "$tmp"; return 1; }
+  chmod 600 "$tmp"
+  mv -f -- "$tmp" "$f" || { rm -f -- "$tmp"; return 1; }
   log "state written: $f frontend=$frontend inbound=$inbound lanes=${lanes[*]}"
 }
 
@@ -545,6 +565,7 @@ fragment_file() { printf '%s/foreign-%s.cfg' "$SST_HAPROXY_DIR" "$1"; }
 
 render_fragment() {
   local idx=$1 frontend lanes
+  ensure_owned_dir "$SST_HAPROXY_DIR" 755 || return 1
   frontend=$(state_frontend "$idx") || return 1
   mapfile -t lanes < <(state_lanes "$idx")
 
@@ -620,14 +641,20 @@ trim_trailing_blank_lines() {
 }
 
 # Build a candidate config in a temp file: current operator config with exactly
-# one managed include block listing every configured foreign.
+# one managed block containing every configured foreign. HAProxy has no "include"
+# keyword in any section (see haproxy issues #183/#2045), so each fragment is
+# inlined rather than referenced; every fragment opens with its own section
+# header, which keeps the block valid wherever it is appended. A fragment that
+# belongs to a configured foreign but cannot be read aborts the build - an
+# incomplete candidate must never reach validation or activation.
 build_candidate() {
-  local dest=$1 idx first=1
+  local dest=$1 idx first=1 frag
 
   if [[ -f $SST_HC ]]; then
     # Strip the old block, then drop the blank line that used to separate it from
     # the operator's config, so a rebuild is byte-stable instead of growing one
-    # blank line per run.
+    # blank line per run. Legacy include-based blocks are removed here too, which
+    # is how existing installations migrate to the inlined format.
     strip_managed_block "$SST_HC" | trim_trailing_blank_lines >"$dest"
   else
     base_haproxy_cfg >"$dest"
@@ -638,7 +665,18 @@ build_candidate() {
     printf '\n%s\n' "$HAPROXY_BEGIN"
     for idx in $(configured_foreigns); do
       state_valid "$idx" || continue
-      printf 'include %s\n' "$(fragment_file "$idx")"
+      frag=$(fragment_file "$idx")
+      if [[ ! -r $frag ]]; then
+        err "fragment for foreign #$idx is missing or unreadable: $frag"
+        err "candidate config NOT built; the live configuration is untouched."
+        return 1
+      fi
+      [[ $first -eq 1 ]] || printf '\n'
+      cat -- "$frag" || {
+        err "could not read fragment for foreign #$idx: $frag"
+        err "candidate config NOT built; the live configuration is untouched."
+        return 1
+      }
       first=0
     done
     printf '%s\n' "$HAPROXY_END"
@@ -723,7 +761,11 @@ rebuild_haproxy() {
   (( rc == 0 )) || return 1
 
   cand=$(mktemp "${TMPDIR:-/tmp}/$APP.cand.XXXXXX")
-  build_candidate "$cand"
+  if ! build_candidate "$cand"; then
+    warn "candidate build failed; haproxy configuration left untouched"
+    rm -f -- "$cand"
+    return 1
+  fi
   apply_candidate "$cand"
   rc=$?
   rm -f -- "$cand"

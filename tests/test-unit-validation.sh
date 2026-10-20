@@ -311,6 +311,76 @@ else
 fi
 rm -f "$STATE/foreign-1.env"
 
+# ---------------------------------------------------------------------------
+t_start "haproxy stub rejects include lines in every context"
+# HAProxy has no include keyword at all (verified against 3.2.9 sources), so
+# the stub must reject it wherever it appears - this is the regression net that
+# keeps build_candidate from ever re-gaining include lines.
+tmpcfg=$(mktemp "${TMPDIR:-/tmp}/sst-stubcfg.XXXXXX")
+printf 'global\n    maxconn 10\n\ndefaults\n    mode tcp\ninclude /tmp/x.cfg\n' >"$tmpcfg"
+out=$("$SST_HAPROXY" -c -f "$tmpcfg" 2>&1); rc=$?
+assert_eq "$rc" "1" "include inside a defaults section fails validation"
+assert_contains "$out" "unknown keyword 'include' in 'defaults' section" \
+  "error wording matches the real 3.2 parser"
+assert_contains "$out" "Fatal errors found in configuration." "fatal summary is reported"
+
+printf 'include /tmp/x.cfg\nglobal\n    maxconn 10\n' >"$tmpcfg"
+out=$("$SST_HAPROXY" -c -f "$tmpcfg" 2>&1); rc=$?
+assert_eq "$rc" "1" "include before any section fails validation"
+assert_contains "$out" "unknown keyword 'include' out of section" "top-level wording matches"
+
+printf 'global\n    maxconn 10\n\ndefaults\n    mode tcp\n    timeout connect 5s\nfrontend f1\n    bind 127.0.0.1:12345\n    default_backend b1\nbackend b1\n    server s1 127.0.0.1:12346 check\n' >"$tmpcfg"
+out=$("$SST_HAPROXY" -c -f "$tmpcfg" 2>&1); rc=$?
+assert_eq "$rc" "0" "a clean, correctly ordered config validates"
+assert_contains "$out" "Configuration file is valid" "clean config reports valid"
+
+printf 'bind 127.0.0.1:12345\nglobal\n    maxconn 10\n' >"$tmpcfg"
+out=$("$SST_HAPROXY" -c -f "$tmpcfg" 2>&1); rc=$?
+assert_eq "$rc" "1" "a keyword before any section fails validation"
+assert_contains "$out" "unknown keyword 'bind' out of section" "out-of-section keyword is reported"
+rm -f -- "$tmpcfg"
+
+# ---------------------------------------------------------------------------
+t_start "build_candidate refuses a foreign whose fragment is missing"
+rm -f -- "$HAPROXY_DIR/foreign-1.cfg" /tmp/sst-cand.test
+# NOTE: sourcing the script enables 'set -e' in this shell, so the expected
+# failure must be guarded or the shell exits before echo.
+st=$(eval_in_script '' 'write_state 1 45438 45438 46101 46102 46103 46104; build_candidate /tmp/sst-cand.test || echo rc=$?')
+assert_contains "$st" "missing or unreadable" "build_candidate names the missing fragment"
+assert_contains "$st" "rc=1" "build_candidate fails instead of guessing"
+rm -f -- /tmp/sst-cand.test
+
+# ---------------------------------------------------------------------------
+t_start "state writers re-create directories removed mid-session"
+# menu_uninstall rmdir's these; the same menu session must keep working.
+rm -rf -- "$STATE"
+st=$(eval_in_script '' 'write_state 1 45438 45438 46101 46102 46103 46104; echo rc=$?')
+assert_contains "$st" "rc=0" "write_state succeeds after the state directory was removed"
+assert_file "$STATE/foreign-1.env" "state file re-created"
+if compgen -G "$STATE/*.tmp.*" >/dev/null; then
+  t_fail "no temporary state files remain" "found: $(compgen -G "$STATE/*.tmp.*")"
+else
+  t_ok "no temporary state files remain (write is atomic)"
+fi
+
+rm -rf -- "$HAPROXY_DIR"
+st=$(eval_in_script '' 'render_fragment 1; echo rc=$?')
+assert_contains "$st" "rc=0" "render_fragment re-creates the fragment directory"
+assert_file "$HAPROXY_DIR/foreign-1.cfg" "fragment re-created"
+
+rm -rf -- "$STATE"
+st=$(eval_in_script '' 'set_role iran; echo rc=$?')
+assert_contains "$st" "rc=0" "set_role succeeds after the state directory was removed"
+assert_file "$STATE/role" "role file re-created"
+
+probe="$SANDBOX/mode-probe"; : >"$probe"; chmod 700 "$probe" 2>/dev/null
+if [[ $(stat -c '%a' "$probe" 2>/dev/null) == 700 ]]; then
+  assert_eq "$(stat -c '%a' "$STATE")" "700" "re-created state directory is mode 700"
+else
+  echo "  SKIP directory mode (filesystem does not enforce permissions)"
+fi
+rm -f -- "$probe"
+
 printf 'TESTSUMMARY:pass=%d fail=%d\n' "$PASS" "$FAIL"
 summary >/dev/null
 sandbox_destroy
