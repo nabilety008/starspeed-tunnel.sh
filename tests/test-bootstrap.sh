@@ -69,6 +69,12 @@ run_bootstrap --status >/dev/null
 assert_file "$TMPROOT/bin/starspeed-tunnel" 'entrypoint installed'
 assert_eq "$(tail -n1 "$TMPROOT/exec.log")" '--status' 'arguments passed to entrypoint'
 
+t_start 'all supported Ubuntu LTS releases pass the OS gate'
+for version in 22.04 24.04 26.04; do
+  make_os "$version"; : >"$TMPROOT/exec.log"
+  if run_bootstrap --status >/dev/null; then t_ok "Ubuntu $version accepted"; else t_fail "Ubuntu $version accepted"; fi
+done
+
 t_start '--lang fa remains compatible and still launches the entrypoint'
 : >"$TMPROOT/exec.log"
 run_bootstrap --lang fa >/dev/null

@@ -73,7 +73,7 @@ inbound مربوط به Xray شما باید از قبل وجود داشته ب�
 
 ## ۵. پیش‌نیازها
 
-* Ubuntu 22.04 / 24.04 با `systemd`، کلاینت OpenSSH و HAProxy.
+* Ubuntu 22.04 / 24.04 / 26.04 LTS با `systemd`، کلاینت OpenSSH و HAProxy.
 * نصب‌کننده در صورت نبود پکیج‌های لازم، پیشنهاد می‌دهد آن‌ها را با `apt-get` نصب کند.
 
 | Host    | Role     | نیازمندی                                 |
@@ -120,9 +120,11 @@ wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main
 Bootstrap ابتدا فایل اصلی را کامل در یک فایل موقت دانلود و با Bash اعتبارسنجی می‌کند،
 سپس آن را به‌صورت اتمیک در `/usr/local/sbin/starspeed-tunnel` نصب می‌کند. اجرای مجدد
 فقط فایل اجرایی را به‌روز می‌کند و تنظیمات موجود در `/etc/starspeed-tunnel` حفظ
-می‌شوند. سیستم‌های پشتیبانی‌شده Ubuntu 22.04 و 24.04 هستند و نصب‌کننده‌ی اصلی در
+می‌شوند. سیستم‌های پشتیبانی‌شده Ubuntu 22.04، 24.04 و 26.04 LTS هستند و نصب‌کننده‌ی اصلی در
 صورت نیاز نصب پکیج‌های runtime را با APT پیشنهاد می‌دهد.
 Bootstrap باید با root (معمولاً `sudo`) اجرا شود و وجود `curl` یا `wget` الزامی است.
+اسکریپت از پکیج‌های استاندارد Ubuntu شامل `bash`، `systemd`، `openssh-client`،
+`haproxy` و `iproute2` استفاده می‌کند و قوانین UFW، nftables یا iptables را تغییر نمی‌دهد.
 
 اجرای مجدد پس از نصب:
 

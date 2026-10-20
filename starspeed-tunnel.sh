@@ -12,7 +12,7 @@
 # This script only ever *reads* Xray / 3x-ui state. It never creates, edits or
 # deletes an Xray inbound, and it never touches an existing "Direct" config.
 #
-# Target: Ubuntu 22.04 / 24.04, systemd, OpenSSH, HAProxy.
+# Target: Ubuntu 22.04 / 24.04 / 26.04, systemd, OpenSSH, HAProxy.
 #
 set -Eeuo pipefail
 
@@ -250,6 +250,16 @@ require_root() {
   if [[ ${SST_ALLOW_NONROOT:-0} != 1 && ${EUID:-$(id -u)} -ne 0 ]]; then
     die "must run as root (use sudo)"
   fi
+}
+
+require_supported_os() {
+  local os_file=${SST_OS_RELEASE:-/etc/os-release}
+  local ID='' VERSION_ID='' PRETTY_NAME=''
+  [[ -r $os_file ]] || die "cannot read OS metadata: $os_file"
+  # shellcheck disable=SC1090
+  . "$os_file"
+  [[ $ID == ubuntu && $VERSION_ID =~ ^(22\.04|24\.04|26\.04)$ ]] ||
+    die "unsupported operating system: ${PRETTY_NAME:-$ID $VERSION_ID} (supported: Ubuntu 22.04/24.04/26.04)"
 }
 
 require_cmd() {
@@ -2021,6 +2031,7 @@ main() {
   esac
 
   require_root
+  require_supported_os
   prompt_init
   init_logging
   lang_init

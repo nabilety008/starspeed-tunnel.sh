@@ -41,6 +41,24 @@ else
   t_fail "all validation predicates are defined when sourced"
 fi
 
+t_start "main script accepts each supported Ubuntu LTS release"
+for version in 22.04 24.04 26.04; do
+  os_file=$SANDBOX/os-release-$version
+  printf 'ID=ubuntu\nVERSION_ID="%s"\nPRETTY_NAME="Ubuntu %s"\n' "$version" "$version" >"$os_file"
+  if bash -c 'set -uo pipefail; source "$1" --help >/dev/null; SST_OS_RELEASE=$2; require_supported_os' _ "$SCRIPT" "$os_file" 2>/dev/null; then
+    t_ok "main accepts Ubuntu $version"
+  else
+    t_fail "main accepts Ubuntu $version"
+  fi
+done
+os_file=$SANDBOX/os-release-unsupported
+printf 'ID=ubuntu\nVERSION_ID="25.10"\nPRETTY_NAME="Ubuntu 25.10"\n' >"$os_file"
+if bash -c 'set -uo pipefail; source "$1" --help >/dev/null; SST_OS_RELEASE=$2; require_supported_os' _ "$SCRIPT" "$os_file" >/dev/null 2>&1; then
+  t_fail "main rejects unsupported Ubuntu releases"
+else
+  t_ok "main rejects unsupported Ubuntu releases"
+fi
+
 # ---------------------------------------------------------------------------
 t_start "valid_port"
 assert_pred "22 is a valid port"                     valid_port "22"        y

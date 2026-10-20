@@ -128,6 +128,8 @@ sandbox_new() {
   export SST_SSH_KEYSCAN="$STUBS/ssh-keyscan"
   export SST_ALLOW_NONROOT=1
   export SST_NO_APT=1
+  printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$SANDBOX/os-release"
+  export SST_OS_RELEASE=$SANDBOX/os-release
   export FAKE_KEYSCAN_FAIL=0
   unset FAKE_HAPROXY_FORBIDDEN_PORTS
   unset FAKE_HAPROXY_FAIL_FILE

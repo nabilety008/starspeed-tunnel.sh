@@ -22,7 +22,7 @@ msg() {
   case $key in
       root) printf 'must run as root (use sudo)' ;;
       os_meta) printf 'cannot read OS metadata: %s' "$detail" ;;
-      unsupported) printf 'unsupported operating system: %s (supported: Ubuntu 22.04/24.04)' "$detail" ;;
+      unsupported) printf 'unsupported operating system: %s (supported: Ubuntu 22.04/24.04/26.04)' "$detail" ;;
       missing_cmd) printf 'required command not found: %s' "$detail" ;;
       temp) printf 'cannot create secure temporary download' ;;
       download) printf 'download failed (%s)' "$detail" ;;
@@ -49,7 +49,7 @@ done
 [[ -r $OS_RELEASE ]] || die os_meta "$OS_RELEASE"
 # shellcheck disable=SC1090
 . "$OS_RELEASE"
-[[ ${ID:-} == ubuntu && ${VERSION_ID:-} =~ ^(22\.04|24\.04)$ ]] ||
+[[ ${ID:-} == ubuntu && ${VERSION_ID:-} =~ ^(22\.04|24\.04|26\.04)$ ]] ||
   die unsupported "${PRETTY_NAME:-${ID:-unknown} ${VERSION_ID:-unknown}}"
 
 mkdir -p -- "$INSTALL_DIR"

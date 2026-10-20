@@ -56,7 +56,7 @@ the foreign server owns the SSH key and the Xray destination.
 
 ## 3. Requirements
 
-Ubuntu 22.04 / 24.04 with `systemd`, the OpenSSH client, and HAProxy. The
+Ubuntu 22.04 / 24.04 / 26.04 LTS with `systemd`, the OpenSSH client, and HAProxy. The
 installer offers to install missing packages via `apt-get`.
 
 | Host    | Role     | Needs                                     |
@@ -103,9 +103,11 @@ wget -qO- https://raw.githubusercontent.com/nabilety008/starspeed-tunnel.sh/main
 The bootstrap downloads to a temporary file, validates the Bash entrypoint,
 then atomically installs it as `/usr/local/sbin/starspeed-tunnel`. Re-running
 the command updates only that executable; existing configuration under
-`/etc/starspeed-tunnel` is preserved. Supported systems are Ubuntu 22.04 and
-24.04. The main installer offers to install missing runtime packages with APT.
+`/etc/starspeed-tunnel` is preserved. Supported systems are Ubuntu 22.04,
+24.04 and 26.04 LTS. The main installer offers to install missing runtime packages with APT.
 The bootstrap requires root (normally via `sudo`) plus either `curl` or `wget`.
+It uses standard Ubuntu packages (`bash`, `systemd`, `openssh-client`,
+`haproxy`, and `iproute2`) and does not alter UFW, nftables, or iptables rules.
 
 After installation, launch it again at any time with:
 
