@@ -67,7 +67,7 @@ fi
 # ---------------------------------------------------------------------------
 t_start "re-running Iran setup is idempotent"
 before_hc=$(cat "$HC"); before_frag=$(cat "$FRAG1")
-run_menu "$(iran_answers 1 45438 45438)" >/dev/null
+run_menu "$(iran_rerun 1)" >/dev/null
 assert_eq "$(cat "$HC")" "$before_hc" "haproxy.cfg byte-identical on re-run"
 assert_eq "$(cat "$FRAG1")" "$before_frag" "fragment byte-identical on re-run"
 assert_no_grep "$HC" '^[[:space:]]*include[[:space:]]' "still no include lines after the re-run"
@@ -84,7 +84,7 @@ printf 'frontend operator_owned\n    bind :9999\n' >"$HAPROXY_DIR/conf.d/operato
 # survive every rebuild untouched.
 OPERATOR_LINE='# operator-owned line appended to haproxy.cfg'
 printf '%s\n' "$OPERATOR_LINE" >>"$HC"
-run_menu "$(iran_answers 1 45438 45438)" >/dev/null
+run_menu "$(iran_rerun 1)" >/dev/null
 assert_file "$HAPROXY_DIR/conf.d/operator.cfg" "operator config file untouched"
 assert_contains "$(cat "$HC")" "$OPERATOR_LINE" "operator's own line survived"
 
@@ -124,8 +124,9 @@ AUTH=$SSH_DIR/authorized_keys
 # correctly refuses to proceed.
 listen_on "45438"
 
-# Answers: menu 2, Iran IP, foreign number, Xray inbound, setup code.
-out=$(run_menu "$(printf '2\n198.51.100.10\n1\n45438\n%s\n' "$CODE1")")
+# Answers: menu 2, setup code, Iran IP, then "y" to apply.
+# The index and inbound port are read from the setup code itself.
+out=$(run_menu "$(printf '2\n%s\n198.51.100.10\ny\n' "$CODE1")")
 unit=$(cat "$UNIT1")
 assert_contains "$unit" "root@198.51.100.10" "unit targets the Iran host"
 assert_contains "$unit" "-R 127.0.0.1:46101:127.0.0.1:45438" "lane 1 forwards to the Xray inbound"
@@ -171,28 +172,28 @@ assert_eq "$(grep -c '^foreign' "$STATE/role" 2>/dev/null)" "1" "role file marks
 
 t_start "foreign setup is idempotent and reuses a healthy keypair"
 before_unit=$(cat "$UNIT1")
-# An already-configured foreign is asked for confirmation before the inbound.
-out2=$(run_menu "$(printf '2\n198.51.100.10\n1\ny\n45438\n%s\n' "$CODE1")")
+# Code-first: paste the code, confirm the overwrite, give the Iran IP, apply.
+out2=$(run_menu "$(printf '2\n%s\ny\n198.51.100.10\ny\n' "$CODE1")")
 assert_eq "$(cat "$UNIT1")" "$before_unit" "re-running produces an identical unit"
 assert_contains "$out2" "reusing existing" "existing keypair is reused, not regenerated"
 
 t_start "declining the overwrite leaves the foreign untouched"
-# Declined at the confirmation, so no inbound or setup code is needed.
-out=$(run_menu "$(printf '2\n198.51.100.10\n1\nn\n')")
+# Declined at the overwrite confirmation, so no IP or apply step is reached.
+out=$(run_menu "$(printf '2\n%s\nn\n' "$CODE1")")
 assert_contains "$out" "left unchanged" "installer honours a declined re-run"
 assert_eq "$(cat "$UNIT1")" "$before_unit" "declined re-run rewrote nothing"
 
 t_start "foreign setup refuses to continue when the host key cannot be scanned"
 rm -f "$SSH_DIR/starspeed-tunnel_iran1"
-out=$(FAKE_KEYSCAN_FAIL=1 run_menu "$(printf '2\n198.51.100.10\n1\ny\n45438\n%s\n' "$CODE1")")
+out=$(FAKE_KEYSCAN_FAIL=1 run_menu "$(printf '2\n%s\ny\n198.51.100.10\ny\n' "$CODE1")")
 assert_contains "$out" "host key" "installer explains the host key failure"
 assert_no_file "$SSH_DIR/starspeed-tunnel_iran1" "no empty known_hosts left behind"
 
-t_start "a setup code for a different foreign index is rejected"
-# Replay foreign #1's own code while claiming to configure #2.
-out=$(run_menu "$(printf '2\n198.51.100.10\n2\n45438\n%s\n' "$CODE1")")
-assert_contains "$out" "but you selected #2" "index mismatch is refused"
-assert_no_file "$STATE/foreign-2.env" "no state written for the mismatched index"
+t_start "a malformed setup code is rejected without touching state"
+before_state=$(cat "$STATE/foreign-1.env")
+out=$(run_menu "$(printf '2\nnot-a-real-setup-code\n')")
+assert_contains "$out" "invalid or unreadable" "malformed code is refused"
+assert_eq "$(cat "$STATE/foreign-1.env")" "$before_state" "no state rewritten on a bad code"
 
 # ---------------------------------------------------------------------------
 # Back to the Iran host for the remaining menu entries. Restore the Iran
@@ -369,9 +370,9 @@ t_start "Setup Iran works in the same menu session as Uninstall"
 # Regression for the missing-state-directory crash: uninstall rmdir's the state
 # directory, and a single process must still be able to run Setup Iran right
 # afterwards (the crash only happens within one menu session).
-# Answers: 7 + three confirms (uninstall, backups, ssh keypair), then the
+# Answers: 9 + three confirms (uninstall, backups, ssh keypair), then the
 # Iran setup answers, then the trailing menu exit.
-out=$(run_menu "$(printf '7\ny\nn\nn\n%s' "$(iran_answers 1 45438 45438)")")
+out=$(run_menu "$(printf '9\ny\nn\nn\n%s' "$(iran_answers 1 45438 45438)")")
 assert_file "$STATE/foreign-1.env" "state re-created after uninstall in the same session"
 assert_file "$STATE/role" "role re-created after uninstall in the same session"
 assert_file "$HC" "haproxy config still present after the re-setup"
@@ -382,14 +383,14 @@ assert_contains "$out" "haproxy -c passed validation" "rebuilt config validated 
 # ---------------------------------------------------------------------------
 t_start "uninstall is declined safely"
 cfg_before=$(cat "$HC")
-run_menu "$(printf '7\nn\n')" >/dev/null
-assert_contains "$(run_menu "$(printf '7\nn\n')")" "nothing changed" "declining is honoured"
+run_menu "$(printf '9\nn\n')" >/dev/null
+assert_contains "$(run_menu "$(printf '9\nn\n')")" "nothing changed" "declining is honoured"
 assert_eq "$(cat "$HC")" "$cfg_before" "declined uninstall changed nothing"
 assert_file "$FRAG1" "declined uninstall kept the fragment"
 
 t_start "uninstall removes only starspeed-managed files"
-# Menu 7, confirm, then decline removing backups.
-run_menu "$(printf '7\ny\nn\n')" >/dev/null
+# Menu 9, confirm, then decline removing backups.
+run_menu "$(printf '9\ny\nn\n')" >/dev/null
 assert_no_file "$FRAG1" "#1 fragment removed"
 assert_no_file "$FRAG2" "#2 fragment removed"
 assert_no_file "$UNIT1" "lane unit removed"
@@ -404,6 +405,52 @@ assert_no_file "$SD/xray.service" "no xray unit created"
 assert_no_file "$SD/x-ui.service" "no 3x-ui unit created"
 assert_no_file "$SANDBOX/etc/xray" "no xray state created"
 assert_no_file "$SANDBOX/etc/3x-ui" "no 3x-ui state created"
+
+# ---------------------------------------------------------------------------
+# v1.1.0: language, help, settings and input hardening
+# ---------------------------------------------------------------------------
+sandbox_new iran
+
+t_start "the menu is shown in English by default"
+out=$(SST_LANG=en run_menu '0')
+assert_contains "$out" "StarSpeed Tunnel" "English title shown"
+assert_contains "$out" "Setup Iran Server" "English menu entry shown"
+assert_contains "$out" "Uninstall" "English uninstall entry shown"
+
+t_start "the menu is shown in Persian when requested"
+out=$(SST_LANG=fa run_menu '0')
+assert_contains "$out" "استاراسپید تونل" "Persian title shown"
+assert_contains "$out" "راه‌اندازی سرور ایران" "Persian menu entry shown"
+assert_not_contains "$out" "Setup Iran Server" "English labels are suppressed"
+
+t_start "an invalid menu selection is reported and changes nothing"
+out=$(run_menu '99\n0')
+assert_contains "$out" "Invalid selection: 99" "invalid selection is named"
+assert_no_file "$STATE/role" "no state written for an invalid selection"
+
+t_start "help is available from the menu without touching state"
+out=$(run_menu "$(printf '7\n0')")
+assert_contains "$out" "Help & Documentation" "help screen is reachable"
+assert_contains "$out" "Setup code" "help explains the setup code"
+assert_no_file "$STATE/role" "viewing help writes no state"
+
+t_start "the Settings menu can switch to Persian and persist it"
+out=$(run_menu "$(printf '8\n2\n0')")
+assert_contains "$out" "زبان ذخیره شد" "saving the language is confirmed (in Persian)"
+assert_eq "$(cat "$BASE/lang" 2>/dev/null)" "fa" "language choice persisted to disk"
+
+t_start "--lang fa persists the choice for future runs"
+run_sst --lang fa >/dev/null
+assert_eq "$(cat "$BASE/lang")" "fa" "--lang writes the language file"
+out=$(run_menu '0')
+assert_contains "$out" "استاراسپید تونل" "persisted language is used on next run"
+
+t_start "a frontend port already used by another process is refused"
+listen_on 45438
+out=$(run_menu "$(printf '1\n1\n45438\n45438\ny\n0')")
+assert_contains "$out" "already in use by another process" "bound port is refused"
+assert_no_file "$STATE/foreign-1.env" "no state written when the port is taken"
+listen_on ''
 
 printf 'TESTSUMMARY:pass=%d fail=%d\n' "$PASS" "$FAIL"
 summary >/dev/null

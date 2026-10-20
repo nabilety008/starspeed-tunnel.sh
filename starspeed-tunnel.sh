@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 
 APP=starspeed-tunnel
-VERSION=1.0.0
+VERSION=1.1.0
 
 # ---------------------------------------------------------------------------
 # Paths and tools. Every path and external tool can be overridden through the
@@ -67,6 +67,271 @@ err()   { printf '%serr %s  %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
 die()   { err "$*"; exit 1; }
 
 hr() { printf '%s\n' "------------------------------------------------------------"; }
+
+# ---------------------------------------------------------------------------
+# Internationalisation (English default, Persian optional)
+# ---------------------------------------------------------------------------
+# Centralised lookup: every user-facing label is a key into MSG_EN / MSG_FA.
+# Technical values (IPs, ports, paths, commands) stay inside the format string
+# so they remain LTR-friendly inside Persian sentences. English is the fallback
+# for any key a translation omits, and for unsupported locales.
+LANG_PREF=en
+LANG_FILE=''   # set in lang_init once SST_BASE is known
+
+declare -A MSG_EN=() MSG_FA=()
+
+t() {  # t key [printf-args...]
+  local key=$1; shift
+  local tmpl
+  if [[ $LANG_PREF == fa ]]; then tmpl=${MSG_FA[$key]:-${MSG_EN[$key]:-$key}}
+  else tmpl=${MSG_EN[$key]:-$key}; fi
+  if (( $# )); then printf "$tmpl" "$@"; else printf '%s' "$tmpl"; fi
+}
+
+lang_init() {
+  LANG_FILE=$SST_BASE/lang
+  if [[ -n ${SST_LANG:-} ]]; then
+    LANG_PREF=$SST_LANG
+  elif [[ -f $LANG_FILE ]]; then
+    LANG_PREF=$(head -n1 "$LANG_FILE" 2>/dev/null)
+  else
+    case ${LC_ALL:-${LANG:-}} in
+      fa|fa_*|fa-*) LANG_PREF=fa ;;
+      *)            LANG_PREF=en ;;
+    esac
+  fi
+  [[ $LANG_PREF == fa || $LANG_PREF == en ]] || LANG_PREF=en
+}
+
+lang_save() {
+  ensure_owned_dir "$SST_BASE" 700 || return 1
+  printf '%s\n' "$1" >"$LANG_FILE"
+  chmod 600 "$LANG_FILE" 2>/dev/null || true
+}
+
+# --- English table ---------------------------------------------------------
+MSG_EN=(
+  [menu.title]='StarSpeed Tunnel'
+  [menu.role]='Role on this host'
+  [menu.select]='Select'
+  [menu.invalid]='Invalid selection: %s'
+  [menu.1]='Setup Iran Server'
+  [menu.2]='Setup Foreign Server'
+  [menu.3]='Authorize Foreign SSH Key'
+  [menu.4]='Tunnel Status'
+  [menu.5]='Diagnose & Repair'
+  [menu.6]='Remove Foreign Tunnel'
+  [menu.7]='Help & Documentation'
+  [menu.8]='Settings & Language'
+  [menu.9]='Uninstall'
+  [menu.0]='Exit'
+  [hint.1]='configure HAProxy frontends and reverse-SSH lanes on Iran'
+  [hint.2]='connect this foreign host to Iran (uses a setup code)'
+  [hint.3]="add a foreign server's SSH public key to Iran"
+  [hint.4]='show tunnels, ports, lanes and service health'
+  [hint.5]='run read-only checks, then repair what is broken'
+  [hint.6]='remove one foreign tunnel (Xray / 3x-ui never touched)'
+  [hint.7]='architecture, ports, setup codes and troubleshooting'
+  [hint.8]='choose the display language'
+  [hint.9]='remove StarSpeed Tunnel from this host'
+  [hint.0]='leave this menu'
+
+  [settings.title]='Settings & Language'
+  [settings.current]='Current language'
+  [settings.choose]='Choose display language'
+  [settings.en]='English'
+  [settings.fa]='Persian (Farsi)'
+  [settings.saved]='Language saved'
+  [settings.back]='Back'
+
+  [help.title]='Help & Documentation'
+  [help.arch]='Architecture: Client -> Iran frontend port -> HAProxy -> 4 reverse-SSH lanes -> Foreign -> Xray inbound'
+  [help.ports]='Ports: each foreign gets 1 public frontend on Iran, 1 Xray inbound on the foreign, and 4 lane ports on Iran.'
+  [help.code]='Setup code: a base64 blob carrying the allocation. It contains no passwords or private keys.'
+  [help.security]='This tool only reads Xray / 3x-ui. It never disables host-key checking and never stores secrets in setup codes.'
+  [help.full]='Full documentation: README.md (English) and README.fa.md (Persian).'
+
+  [iran.title]='Setup Iran Server'
+  [iran.intro]='This step runs on the IRAN server. It creates HAProxy frontends and allocates reverse-SSH lanes for each foreign server.'
+  [iran.existing]='Existing configuration: foreign(s) %s. Existing port allocation is reused unchanged.'
+  [iran.foreign_count]='How many foreign servers will tunnel through Iran?'
+  [iran.foreign_title]='Foreign #%s'
+  [iran.kept]='foreign #%s already configured - keeping it unchanged'
+  [iran.frontend_prompt]='Public frontend port on Iran for foreign #%s'
+  [iran.inbound_prompt]='Xray inbound port on foreign #%s (lane target)'
+  [iran.same_port]='frontend and Xray port share a number; that is allowed (different hosts)'
+  [iran.lanes]='allocated lanes: %s'
+  [iran.summary]='Configuration summary'
+  [iran.confirm_apply]='Apply this HAProxy configuration?'
+  [iran.applying]='Applying HAProxy configuration'
+  [iran.configured]='Iran is configured'
+  [iran.code_header]='Setup codes - transfer each to its foreign server (no secrets inside)'
+  [iran.next_steps]="On each foreign server run: sudo ./$APP then choose '2) Setup Foreign Server' and paste its code."
+  [iran.authorize_hint]="After a foreign prints its SSH public key, authorize it here with option 3."
+
+  [foreign.title]='Setup Foreign Server'
+  [foreign.intro]='This step runs on the FOREIGN server. It connects this host to Iran through reverse SSH lanes. It never modifies Xray or 3x-ui.'
+  [foreign.code_prompt]='Paste the setup code generated on the Iran server'
+  [foreign.code_ok]='setup code accepted (foreign #%s)'
+  [foreign.code_bad]='setup code is invalid or unreadable'
+  [foreign.already]='foreign #%s is already configured on this host'
+  [foreign.reoverwrite]='Re-run setup for foreign #%s and overwrite the saved settings?'
+  [foreign.unchanged]='left unchanged. Use option 4 (Status) or 5 (Repair) instead.'
+  [foreign.ip_prompt]='Iran server IP address or hostname'
+  [foreign.ip_from_code]='using Iran address from the setup code'
+  [foreign.summary]='Configuration summary'
+  [foreign.confirm_apply]='Apply this configuration?'
+  [foreign.xray_ok]='Xray inbound is listening on 127.0.0.1:%s'
+  [foreign.xray_missing]='nothing is listening on 127.0.0.1:%s (expected: your existing Xray / 3x-ui inbound)'
+  [foreign.continue_anyway]='Continue anyway? The lane stays down until Xray listens.'
+  [foreign.pubkey_header]='PUBLIC KEY - authorize this on Iran (option 3)'
+  [foreign.next_steps]="%s/4 lanes up. This script does not modify Xray or 3x-ui."
+  [foreign.lane_status]='Lane status'
+
+  [status.title]='StarSpeed Tunnel status'
+  [status.role]='Role'
+  [status.version]='Version'
+  [status.foreigns]='Configured foreign servers'
+  [status.none]='No tunnels are configured yet.'
+  [status.none_hint]="On Iran choose '1) Setup Iran Server'; on a foreign choose '2) Setup Foreign Server'."
+  [status.haproxy]='HAProxy'
+  [status.haproxy_cfg]='HAProxy config'
+  [status.frontend]='Frontend'
+  [status.frontend_listener]='Frontend listener'
+  [status.xray_dest]='Xray destination'
+  [status.ssh_auth]='SSH authorized keys'
+  [status.known_hosts]='Iran host key (known_hosts)'
+  [status.overall]='Overall'
+  [status.ready]='READY'
+  [status.degraded]='DEGRADED'
+  [status.unknown]='UNKNOWN'
+  [status.up]='UP'
+  [status.down]='DOWN'
+  [status.listening]='listening'
+  [status.not_listening]='NOT listening'
+  [status.valid]='valid'
+  [status.invalid]='invalid'
+  [status.entries]='%s entry/entries'
+
+  [repair.title]='Diagnose & Repair'
+  [repair.readonly]='Running read-only diagnostics first. Nothing is changed until you confirm.'
+  [repair.iran_side]='Repairing the Iran side'
+  [repair.foreign_side]='Repairing the foreign side'
+  [repair.nothing]='nothing to repair'
+  [repair.propose]='Proposed changes will be listed before anything is applied.'
+)
+
+# --- Persian table ---------------------------------------------------------
+MSG_FA=(
+  [menu.title]='استاراسپید تونل'
+  [menu.role]='نقش این سرور'
+  [menu.select]='انتخاب'
+  [menu.invalid]='انتخاب نامعتبر: %s'
+  [menu.1]='راه‌اندازی سرور ایران'
+  [menu.2]='راه‌اندازی سرور خارج'
+  [menu.3]='مجوز کلید SSH سرور خارج'
+  [menu.4]='وضعیت تونل'
+  [menu.5]='عیب‌یابی و تعمیر'
+  [menu.6]='حذف تونل سرور خارج'
+  [menu.7]='راهنما و مستندات'
+  [menu.8]='تنظیمات و زبان'
+  [menu.9]='حذف کامل نصب'
+  [menu.0]='خروج'
+  [hint.1]='ساخت frontendها و لین‌های معکوس SSH در ایران'
+  [hint.2]='اتصال این سرور خارج به ایران (با کد راه‌اندازی)'
+  [hint.3]='افزودن کلید عمومی SSH سرور خارج به ایران'
+  [hint.4]='نمایش تونل‌ها، پورت‌ها، لین‌ها و سلامت سرویس‌ها'
+  [hint.5]='اجرای بررسی‌های فقط-خواندنی، سپس تعمیر موارد خراب'
+  [hint.6]='حذف یک تونل سرور خارج (Xray / 3x-ui دست نمی‌خورد)'
+  [hint.7]='معماری، پورت‌ها، کدهای راه‌اندازی و رفع مشکل'
+  [hint.8]='انتخاب زبان نمایش'
+  [hint.9]='حذف کامل استاراسپید تونل از این سرور'
+  [hint.0]='خروج از این منو'
+
+  [settings.title]='تنظیمات و زبان'
+  [settings.current]='زبان فعلی'
+  [settings.choose]='زبان نمایش را انتخاب کنید'
+  [settings.en]='انگلیسی'
+  [settings.fa]='فارسی'
+  [settings.saved]='زبان ذخیره شد'
+  [settings.back]='بازگشت'
+
+  [help.title]='راهنما و مستندات'
+  [help.arch]='معماری: کلاینت -> پورت frontend در ایران -> HAProxy -> ۴ لین معکوس SSH -> سرور خارج -> ورودی Xray'
+  [help.ports]='پورت‌ها: هر سرور خارج یک frontend عمومی در ایران، یک ورودی Xray روی خودش، و ۴ پورت لین در ایران می‌گیرد.'
+  [help.code]='کد راه‌اندازی: یک رشته base64 حامل تخصیص پورت‌ها. رمز عبور یا کلید خصوصی ندارد.'
+  [help.security]='این ابزار فقط Xray / 3x-ui را می‌خواند. هرگز بررسی کلید میزبان را غیرفعال نمی‌کند و هیچ رمزی در کد راه‌اندازی ذخیره نمی‌کند.'
+  [help.full]='مستندات کامل: README.md (انگلیسی) و README.fa.md (فارسی).'
+
+  [iran.title]='راه‌اندازی سرور ایران'
+  [iran.intro]='این مرحله روی سرور ایران اجرا می‌شود. frontendهای HAProxy می‌سازد و لین‌های معکوس SSH برای هر سرور خارج تخصیص می‌دهد.'
+  [iran.existing]='پیکربندی موجود: سرور(های) خارج %s. تخصیص پورت‌های موجود بدون تغییر استفاده می‌شود.'
+  [iran.foreign_count]='چند سرور خارج از طریق ایران تونل می‌شود؟'
+  [iran.foreign_title]='سرور خارج #%s'
+  [iran.kept]='سرور خارج #%s قبلاً پیکربندی شده - بدون تغییر باقی می‌ماند'
+  [iran.frontend_prompt]='پورت frontend عمومی در ایران برای سرور خارج #%s'
+  [iran.inbound_prompt]='پورت ورودی Xray روی سرور خارج #%s (هدف لین)'
+  [iran.same_port]='frontend و پورت Xray یک عدد دارند؛ این مجاز است (میزبان‌های متفاوت)'
+  [iran.lanes]='لین‌های تخصیص‌یافته: %s'
+  [iran.summary]='خلاصه پیکربندی'
+  [iran.confirm_apply]='این پیکربندی HAProxy اعمال شود؟'
+  [iran.applying]='در حال اعمال پیکربندی HAProxy'
+  [iran.configured]='ایران پیکربندی شد'
+  [iran.code_header]='کدهای راه‌اندازی - هر کدام را به سرور خارج خودش منتقل کنید (بدون رمز داخل آن)'
+  [iran.next_steps]='روی هر سرور خارج اجرا کنید: sudo ./$APP سپس گزینه ۲ را انتخاب و کد را جای‌گذاری کنید.'
+  [iran.authorize_hint]='پس از نمایش کلید عمومی سرور خارج، آن را اینجا با گزینه ۳ مجاز کنید.'
+
+  [foreign.title]='راه‌اندازی سرور خارج'
+  [foreign.intro]='این مرحله روی سرور خارج اجرا می‌شود. این میزبان را با لین‌های معکوس SSH به ایران وصل می‌کند. هرگز Xray یا 3x-ui را تغییر نمی‌دهد.'
+  [foreign.code_prompt]='کد راه‌اندازی ساخته‌شده در سرور ایران را جای‌گذاری کنید'
+  [foreign.code_ok]='کد راه‌اندازی پذیرفته شد (سرور خارج #%s)'
+  [foreign.code_bad]='کد راه‌اندازی نامعتبر یا ناخواناست'
+  [foreign.already]='سرور خارج #%s قبلاً روی این سرور پیکربندی شده است'
+  [foreign.reoverwrite]='راه‌اندازی دوباره سرور خارج #%s و بازنویسی تنظیمات ذخیره‌شده؟'
+  [foreign.unchanged]='بدون تغییر ماند. به‌جای آن از گزینه ۴ (وضعیت) یا ۵ (تعمیر) استفاده کنید.'
+  [foreign.ip_prompt]='آدرس IP یا نام میزبان سرور ایران'
+  [foreign.ip_from_code]='استفاده از آدرس ایران داخل کد راه‌اندازی'
+  [foreign.summary]='خلاصه پیکربندی'
+  [foreign.confirm_apply]='این پیکربندی اعمال شود؟'
+  [foreign.xray_ok]='ورودی Xray روی 127.0.0.1:%s در حال گوش‌دادن است'
+  [foreign.xray_missing]='چیزی روی 127.0.0.1:%s در حال گوش‌دادن نیست (انتظار: ورودی Xray / 3x-ui موجود شما)'
+  [foreign.continue_anyway']='ادامه داده شود؟ لین تا گوش‌دادن Xray خاموش می‌ماند.'
+  [foreign.pubkey_header]='کلید عمومی - این را در ایران مجاز کنید (گزینه ۳)'
+  [foreign.next_steps]='%s/۴ لین فعال است. این اسکریپت Xray یا 3x-ui را تغییر نمی‌دهد.'
+  [foreign.lane_status]='وضعیت لین‌ها'
+
+  [status.title]='وضعیت استاراسپید تونل'
+  [status.role]='نقش'
+  [status.version]='نسخه'
+  [status.foreigns]='سرورهای خارج پیکربندی‌شده'
+  [status.none]='هنوز تونلی پیکربندی نشده است.'
+  [status.none_hint]='در ایران گزینه ۱ و در سرور خارج گزینه ۲ را انتخاب کنید.'
+  [status.haproxy]='HAProxy'
+  [status.haproxy_cfg]='پیکربندی HAProxy'
+  [status.frontend]='فرانت‌اند'
+  [status.frontend_listener]='شنونده فرانت‌اند'
+  [status.xray_dest]='مقصد Xray'
+  [status.ssh_auth]='کلیدهای مجاز SSH'
+  [status.known_hosts]='کلید میزبان ایران (known_hosts)'
+  [status.overall]='کلی'
+  [status.ready]='آماده'
+  [status.degraded]='کاهش‌یافته'
+  [status.unknown]='نامشخص'
+  [status.up]='فعال'
+  [status.down]='غیرفعال'
+  [status.listening]='در حال گوش‌دادن'
+  [status.not_listening]='در حال گوش‌دادن نیست'
+  [status.valid]='معتبر'
+  [status.invalid]='نامعتبر'
+  [status.entries]='%s مورد'
+
+  [repair.title]='عیب‌یابی و تعمیر'
+  [repair.readonly]='ابتدا بررسی‌های فقط-خواندنی اجرا می‌شود. تا تأیید شما چیزی تغییر نمی‌کند.'
+  [repair.iran_side]='تعمیر سمت ایران'
+  [repair.foreign_side]='تعمیر سمت سرور خارج'
+  [repair.nothing]='چیزی برای تعمیر نیست'
+  [repair.propose']='تغییرات پیشنهادی پیش از اعمال فهرست می‌شوند.'
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -811,25 +1076,30 @@ check_frontend_port() {
 }
 
 menu_setup_iran() {
-  step "Setup Iran - HAProxy frontends and lane allocation"
+  step "$(t iran.title)"
+  info "$(t iran.intro)"
+  hr
   require_cmd awk sed grep
   ensure_pkgs
 
+  info "The frontend port is the public port clients on Iran connect to."
+  hr
+
   local count reply idx frontend inbound existing lanes
-  local -a keep=() lane_words=()
   local -a keep=()
+  # New foreigns are collected here and only written to disk after the operator
+  # confirms the summary, so a declined run leaves no partial state behind.
+  local -a new_idx=() new_fe=() new_in=() new_lanes=()
 
   count=$(foreign_count)
   if (( count > 0 )); then
-    info "Existing configuration: foreign(s) $(configured_foreigns | tr '\n' ' ')"
-    warn "your existing port allocation will be reused and not re-allocated."
-    info "Only add the new foreign; existing lanes keep working."
+    info "$(t iran.existing "$(configured_foreigns | tr '\n' ' ')")"
     hr
   fi
 
   reply=$count
   if (( count < 2 )); then
-    ask_index reply "How many foreign servers will tunnel through Iran?" 1
+    ask_index reply "$(t iran.foreign_count)" 1
   fi
 
   for (( idx = 1; idx <= reply; idx++ )); do
@@ -844,19 +1114,19 @@ menu_setup_iran() {
       frontend=$(state_frontend "$idx")
       inbound=$(state_inbound "$idx")
       lanes=$(state_lanes "$idx" | tr '\n' ' ')
-      ok "foreign #$idx already configured - keeping it unchanged"
+      ok "$(t iran.kept "$idx")"
       info "  frontend : $frontend"
       info "  xray in  : $inbound (on the foreign server)"
       info "  lanes    : $lanes"
       continue
     fi
 
-    step "Foreign #$idx"
-    ask_port frontend "Public frontend port on Iran for foreign #$idx"
-    ask_port inbound "Xray inbound port on foreign #$idx (used as the lane target)"
+    step "$(t iran.foreign_title "$idx")"
+    ask_port frontend "$(t iran.frontend_prompt "$idx")"
+    ask_port inbound "$(t iran.inbound_prompt "$idx")"
 
     if [[ $frontend == "$inbound" ]]; then
-      warn "frontend and xray port are the same number; that is allowed (different hosts)"
+      warn "$(t iran.same_port)"
     fi
 
     if ! check_frontend_port "$idx" "$frontend"; then
@@ -869,23 +1139,53 @@ menu_setup_iran() {
       continue
     fi
 
-    ok "allocated lanes: $lanes"
-    # allocate_lanes returns four validated numeric ports; split them back into
-    # positional args explicitly rather than relying on unquoted expansion.
-    read -r -a lane_words <<<"$lanes"
-    write_state "$idx" "$frontend" "$inbound" "${lane_words[@]}"
-    keep+=( "$idx" )
+    ok "$(t iran.lanes "$lanes")"
+    new_idx+=( "$idx" ); new_fe+=( "$frontend" ); new_in+=( "$inbound" ); new_lanes+=( "$lanes" )
+  done
+
+  # --- configuration summary + confirmation ---------------------------------
+  hr
+  step "$(t iran.summary)"
+  for (( idx = 1; idx <= reply; idx++ )); do
+    if state_valid "$idx"; then
+      printf '  foreign #%s (kept): frontend %s, xray %s, lanes %s\n' \
+        "$idx" "$(state_frontend "$idx")" "$(state_inbound "$idx")" \
+        "$(state_lanes "$idx" | tr '\n' ' ')"
+    fi
+  done
+  local k
+  for k in "${!new_idx[@]}"; do
+    printf '  foreign #%s (new) : frontend %s, xray %s, lanes %s\n' \
+      "${new_idx[k]}" "${new_fe[k]}" "${new_in[k]}" "${new_lanes[k]}"
+  done
+  hr
+  # Only gate on a confirmation when there is actually something new to apply;
+  # a pure re-run with everything already configured is a safe no-op rebuild.
+  if (( ${#new_idx[@]} > 0 )); then
+    if ! confirm "$(t iran.confirm_apply)"; then
+      info "cancelled; nothing was applied"
+      return 0
+    fi
+  fi
+
+  # --- apply ----------------------------------------------------------------
+  for k in "${!new_idx[@]}"; do
+    # lanes were validated by allocate_lanes; split into positional args.
+    local -a lane_words=()
+    read -r -a lane_words <<<"${new_lanes[k]}"
+    write_state "${new_idx[k]}" "${new_fe[k]}" "${new_in[k]}" "${lane_words[@]}"
+    keep+=( "${new_idx[k]}" )
   done
 
   hr
-  step "Applying HAProxy configuration"
+  step "$(t iran.applying)"
   if ! rebuild_haproxy; then
     err "HAProxy was not reconfigured. Any state written above is kept so you can retry."
     return 1
   fi
 
   set_role iran
-  ok "Iran is configured"
+  ok "$(t iran.configured)"
 
   local f
   for f in $(configured_foreigns); do
@@ -897,17 +1197,14 @@ menu_setup_iran() {
     local code
     if code=$(emit_setup_code "$f"); then
       info ""
-      info "  Setup code for foreign #$f - transfer this to the foreign server."
-      info "  It contains no passwords or keys."
+      info "  $(t iran.code_header)"
       printf '  %s\n' "$code"
     fi
     info ""
-    info "  On the foreign server run: sudo ./$APP"
-    info "  then choose '2) Add / Setup Foreign' and paste the code above."
+    info "  $(t iran.next_steps)"
   done
   info ""
-  info "After the foreign prints its SSH public key, authorize it here with"
-  info "  sudo ./$APP   ->   3) Authorize Foreign Public Key"
+  info "$(t iran.authorize_hint)"
   return 0
 }
 
@@ -1116,80 +1413,75 @@ enable_units() {
 }
 
 menu_setup_foreign() {
-  step "Add / Setup a foreign server (run this on the FOREIGN server)"
+  step "$(t foreign.title)"
+  info "$(t foreign.intro)"
+  hr
   require_cmd awk sed grep
   ensure_pkgs
 
   local ip idx inbound code sshport lanes
   local -a lane_arr=()
 
-  ask_host ip "Iran server IP address or hostname"
-  ask_index idx "Which foreign number is this? (match the one you set up on Iran)"
+  # The setup code is the source of truth for the allocation, so it is parsed
+  # first. Only the Iran address (which the code does not carry) is asked after.
+  step "$(t foreign.code_prompt)"
+  prompt_read code "Setup code (base64)"
+  if ! parse_setup_code "$code"; then
+    err "$(t foreign.code_bad)"
+    info "On Iran run: sudo ./$APP  ->  '1) Setup Iran Server' to reprint it,"
+    info "or '4) Tunnel Status' to view it without changing anything."
+    return 1
+  fi
+  idx=$SC_IDX
+  ok "$(t foreign.code_ok "$idx")"
 
   if state_valid "$idx"; then
-    warn "foreign #$idx is already configured on this host:"
+    warn "$(t foreign.already "$idx"):"
     info "  iran  : $(state_get "$idx" IRAN_IP 2>/dev/null || echo '?')"
     info "  lanes : $(state_lanes "$idx" | tr '\n' ' ')"
     info "  xray  : $(state_inbound "$idx")"
-    if confirm "Re-run setup for foreign #$idx and overwrite the saved settings?"; then
-      info "continuing"
-    else
-      info "left unchanged. Use '4) Status' or '5) Repair' instead."
+    if ! confirm "$(t foreign.reoverwrite "$idx")"; then
+      info "$(t foreign.unchanged)"
       return 0
     fi
+    info "continuing"
   fi
 
-  ask_port inbound "Xray inbound port on THIS foreign server (must already exist)"
-
-  step "Paste the setup code generated by Iran"
-  prompt_read code "Setup code (base64)"
-  if ! parse_setup_code "$code"; then
-    err "setup code is invalid or unreadable"
-    info "On Iran run: sudo ./$APP  ->  '1) Setup Iran' to reprint it,"
-    info "or '4) Status' to view it without changing anything."
-    return 1
-  fi
-  ok "setup code accepted (foreign #$SC_IDX)"
-
-  if [[ $SC_IDX != "$idx" ]]; then
-    err "this setup code is for foreign #$SC_IDX but you selected #$idx"
-    return 1
-  fi
-
+  # The setup code does not carry the Iran address, so it is always requested.
   if [[ -n $SC_IRAN_IP ]]; then
-    if [[ $SC_IRAN_IP != "$ip" ]]; then
-      warn "setup code says Iran is $SC_IRAN_IP but you entered $ip"
-      if ! confirm "Trust the setup code value ($SC_IRAN_IP)?"; then
-        err "aborted; check the Iran address"
-        return 1
-      fi
-      ip=$SC_IRAN_IP
-    else
-      ok "Iran address in the setup code matches"
-    fi
+    ip=$SC_IRAN_IP
+    ok "$(t foreign.ip_from_code)"
+  else
+    ask_host ip "$(t foreign.ip_prompt)"
   fi
 
+  inbound=$SC_INBOUND
   sshport=$SC_SSH_PORT
   lane_arr=("${SC_LANES[@]}")
   lanes="${lane_arr[*]}"
 
-  info ""
+  hr
+  step "$(t foreign.summary)"
   info "  iran ip      : $ip:$sshport"
   info "  frontend     : $SC_FRONTEND (on Iran)"
   info "  xray inbound : $inbound (here, read-only - not modified)"
   info "  lane ports   : $lanes (allocated by Iran)"
-  info ""
+  hr
 
   # Verify the Xray inbound exists. We only listen for it; never configure it.
   if local_listening "$inbound"; then
-    ok "Xray inbound is listening on 127.0.0.1:$inbound"
+    ok "$(t foreign.xray_ok "$inbound")"
   else
-    warn "nothing is listening on 127.0.0.1:$inbound"
-    warn "expected: your existing Xray/3x-ui inbound on that port"
-    if ! confirm "Continue anyway? (the lane will stay down until Xray listens)"; then
+    warn "$(t foreign.xray_missing "$inbound")"
+    if ! confirm "$(t foreign.continue_anyway)"; then
       err "aborted; Xray was not touched"
       return 1
     fi
+  fi
+
+  if ! confirm "$(t foreign.confirm_apply)"; then
+    info "cancelled; nothing was applied"
+    return 0
   fi
 
   write_state "$idx" "$SC_FRONTEND" "$inbound" "${lane_arr[@]}"
@@ -1214,7 +1506,7 @@ menu_setup_foreign() {
   enable_units "$idx"
 
   sleep 2
-  step "Lane status"
+  step "$(t foreign.lane_status)"
   local j up=0
   for j in 1 2 3 4; do
     if [[ $(systemctl_is_active "$APP-f$idx-lane$j.service") == active ]]; then
@@ -1226,10 +1518,10 @@ menu_setup_foreign() {
     fi
   done
   hr
-  info "PUBLIC KEY - authorize this on Iran (option 3):"
+  info "$(t foreign.pubkey_header):"
   cat "$(ssh_key_path "$idx").pub"
   info ""
-  info "  $up/4 lanes up. This script does not modify Xray or 3x-ui."
+  info "  $(t foreign.next_steps "$up")"
   return 0
 }
 
@@ -1325,13 +1617,29 @@ menu_status() {
   local role idx any=0 rc=0
   role=$(get_role)
   hr
-  info "StarSpeed tunnel status   (role: $role, version $VERSION)"
+  printf '%s  %s  (v%s)\n' "$C_BOLD" "$(t status.title)" "$VERSION"
+  info "$(t status.role): $role   $(t status.foreigns): $(foreign_count)"
   hr
 
   if [[ $role == iran ]]; then
-    printf '  HAProxy: %s   config: %s\n' \
-      "$(systemctl_is_active haproxy)" \
-      "$(haproxy_validate "$SST_HC" >/dev/null 2>&1 && echo valid || echo invalid)"
+    printf '  %s: %s   %s: %s\n' \
+      "$(t status.haproxy)" "$(systemctl_is_active haproxy)" \
+      "$(t status.haproxy_cfg)" \
+      "$(haproxy_validate "$SST_HC" >/dev/null 2>&1 && echo "$(t status.valid)" || echo "$(t status.invalid)")"
+    local auth="$SST_SSH_DIR/authorized_keys"
+    local nkeys=0
+    [[ -f $auth ]] && nkeys=$(grep -cEv '^\s*(#|$)' "$auth" 2>/dev/null || echo 0)
+    printf '  %s: %s\n' "$(t status.ssh_auth)" "$(t status.entries "$nkeys")"
+    info ""
+  elif [[ $role == foreign ]]; then
+    for idx in $(configured_foreigns); do
+      local kh; kh=$(known_hosts_path "$idx")
+      if [[ -s $kh ]]; then
+        printf '  %s: %s\n' "$(t status.known_hosts)" "$(t status.valid)"
+      else
+        printf '  %s: %s\n' "$(t status.known_hosts)" "$(t status.invalid)"
+      fi
+    done
     info ""
   fi
 
@@ -1343,8 +1651,8 @@ menu_status() {
   done
 
   if (( any == 0 )); then
-    info "No tunnels are configured yet."
-    info "On Iran choose '1) Setup Iran'; on a foreign choose '2) Add / Setup Foreign'."
+    info "$(t status.none)"
+    info "$(t status.none_hint)"
     return 0
   fi
 
@@ -1359,6 +1667,19 @@ menu_status() {
     k=$(ssh_key_path "$idx")
     [[ -f $k.pub ]] && printf '  foreign #%s: %s\n' "$idx" "$(cat "$k.pub")"
   done
+
+  # Surface the most recent logged errors so a user can see what went wrong
+  # without opening the log file by hand. Read-only.
+  if [[ -f $LOGFILE ]]; then
+    local last_err
+    # grep exits 1 when nothing matches; keep that from tripping pipefail/set -e.
+    last_err=$(grep -iE 'err|fatal|fail' "$LOGFILE" 2>/dev/null | tail -3 || true)
+    if [[ -n $last_err ]]; then
+      info ""
+      info "Recent errors (last 3 from $LOGFILE):"
+      printf '%s\n' "$last_err" | sed 's/^/  /'
+    fi
+  fi
   return $rc
 }
 
@@ -1539,7 +1860,9 @@ repair_foreign() {
 }
 
 menu_repair() {
-  step "Repair - check saved state, HAProxy, frontends, lanes and services"
+  step "$(t repair.title)"
+  info "$(t repair.readonly)"
+  info "$(t repair.propose)"
   local role idx any=0
   role=$(get_role)
 
@@ -1725,19 +2048,80 @@ usage: $APP [options]
   --status            print status and exit
   --setup-code N      print the setup code for foreign #N and exit
   --role              print this host's role (iran / foreign / unknown)
+  --lang en|fa        set the display language and exit
   --version           print version
   --help              this text
 
 menu:
-  1) Setup Iran
-  2) Add / Setup Foreign
-  3) Authorize Foreign Public Key
-  4) Status
-  5) Repair
-  6) Remove Foreign
-  7) Uninstall
+  1) Setup Iran Server
+  2) Setup Foreign Server
+  3) Authorize Foreign SSH Key
+  4) Tunnel Status
+  5) Diagnose & Repair
+  6) Remove Foreign Tunnel
+  7) Help & Documentation
+  8) Settings & Language
+  9) Uninstall
   0) Exit
 EOF
+}
+
+# Concise one-line indicators shown under the title so a user can see the host's
+# state at a glance without running a full status report.
+menu_header_indicators() {
+  local role n
+  role=$(get_role)
+  n=$(foreign_count)
+  printf '  %s: %s\n' "$(t menu.role)" "$role"
+  printf '  %s: %s\n' "$(t status.foreigns)" "$n"
+  if [[ $role == iran ]]; then
+    printf '  %s: %s\n' "$(t status.haproxy)" "$(systemctl_is_active haproxy)"
+  elif [[ $role == foreign ]]; then
+    local idx up=0
+    for idx in $(configured_foreigns); do
+      local j
+      for j in 1 2 3 4; do
+        [[ $(systemctl_is_active "$APP-f$idx-lane$j.service") == active ]] && up=$((up+1))
+      done
+    done
+    printf '  %s: %s/4\n' "$(t status.up)" "$up"
+  fi
+}
+
+menu_help() {
+  hr
+  printf '%s%s%s\n' "$C_BOLD" "$(t help.title)" "$C_RESET"
+  hr
+  info "$(t help.arch)"
+  info ""
+  info "$(t help.ports)"
+  info ""
+  info "$(t help.code)"
+  info ""
+  info "$(t help.security)"
+  info ""
+  info "$(t help.full)"
+  hr
+}
+
+menu_settings() {
+  hr
+  printf '%s%s%s\n' "$C_BOLD" "$(t settings.title)" "$C_RESET"
+  hr
+  info "$(t settings.current): $LANG_PREF"
+  hr
+  printf '  1) %s\n' "$(t settings.en)"
+  printf '  2) %s\n' "$(t settings.fa)"
+  printf '  0) %s\n' "$(t settings.back)"
+  hr
+  local c
+  prompt_read c "$(t menu.select)" 0
+  case $c in
+    1) lang_save en && LANG_PREF=en; ok "$(t settings.saved): $(t settings.en)" ;;
+    2) lang_save fa && LANG_PREF=fa; ok "$(t settings.saved): $(t settings.fa)" ;;
+    0|"") ;;
+    *) warn "$(t menu.invalid "$c")" ;;
+  esac
 }
 
 main() {
@@ -1745,11 +2129,21 @@ main() {
     --help|-h)    usage; return 0 ;;
     --version|-V) printf '%s %s\n' "$APP" "$VERSION"; return 0 ;;
     --role)       get_role; return 0 ;;
+    --lang)
+      case ${2:-} in
+        en|fa) printf '%s\n' "$2" >"${SST_BASE:-/etc/$APP}/lang" 2>/dev/null \
+                 || { mkdir -p "${SST_BASE:-/etc/$APP}" 2>/dev/null \
+                      && printf '%s\n' "$2" >"${SST_BASE:-/etc/$APP}/lang"; }
+               printf '%s %s\n' "$APP" "language set to $2"; return 0 ;;
+        *) die "usage: $APP --lang en|fa" ;;
+      esac
+      ;;
   esac
 
   require_root
   prompt_init
   init_logging
+  lang_init
   trap 'on_error $LINENO' ERR
 
   case ${1:-} in
@@ -1769,19 +2163,30 @@ main() {
   local choice
   while :; do
     hr
-    printf '%sStarSpeed Tunnel%s  %s(v%s)%s\n' "$C_BOLD" "$C_RESET" "$C_BLUE" "$VERSION" "$C_RESET"
-    printf '  role on this host: %s\n' "$(get_role)"
+    printf '%s  %s  %s(v%s)%s\n' "$C_BOLD" "$(t menu.title)" "$C_BLUE" "$VERSION" "$C_RESET"
+    menu_header_indicators
     hr
-    printf '  1) Setup Iran\n'
-    printf '  2) Add / Setup Foreign\n'
-    printf '  3) Authorize Foreign Public Key\n'
-    printf '  4) Status\n'
-    printf '  5) Repair\n'
-    printf '  6) Remove Foreign\n'
-    printf '  7) Uninstall\n'
-    printf '  0) Exit\n'
+    printf '  1) %s\n' "$(t menu.1)"
+    printf '      %s\n' "$(t hint.1)"
+    printf '  2) %s\n' "$(t menu.2)"
+    printf '      %s\n' "$(t hint.2)"
+    printf '  3) %s\n' "$(t menu.3)"
+    printf '      %s\n' "$(t hint.3)"
+    printf '  4) %s\n' "$(t menu.4)"
+    printf '      %s\n' "$(t hint.4)"
+    printf '  5) %s\n' "$(t menu.5)"
+    printf '      %s\n' "$(t hint.5)"
+    printf '  6) %s\n' "$(t menu.6)"
+    printf '      %s\n' "$(t hint.6)"
+    printf '  7) %s\n' "$(t menu.7)"
+    printf '      %s\n' "$(t hint.7)"
+    printf '  8) %s\n' "$(t menu.8)"
+    printf '      %s\n' "$(t hint.8)"
+    printf '  9) %s\n' "$(t menu.9)"
+    printf '      %s\n' "$(t hint.9)"
+    printf '  0) %s\n' "$(t menu.0)"
     hr
-    prompt_read choice "Select"
+    prompt_read choice "$(t menu.select)"
 
     case $choice in
       1) menu_setup_iran ;;
@@ -1790,9 +2195,11 @@ main() {
       4) menu_status ;;
       5) menu_repair ;;
       6) menu_remove_foreign ;;
-      7) menu_uninstall ;;
+      7) menu_help ;;
+      8) menu_settings ;;
+      9) menu_uninstall ;;
       0|"") exit 0 ;;
-      *) warn "invalid selection: $choice" ;;
+      *) warn "$(t menu.invalid "$choice")" ;;
     esac
 
     if [[ -t 0 ]]; then

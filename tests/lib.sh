@@ -160,19 +160,25 @@ run_sst() {
   SST_PROMPT_SRC=/dev/null "$SCRIPT" "$@" 2>&1
 }
 
-# Answer sequence for menu "1) Setup Iran".
-#   iran_answers 1 45438 45438          -> one foreign, frontend 45438, inbound 45438
-#   iran_answers 2 45438 45438 45439 45439
-# The menu selection itself is included, so the sequence is complete.
-# Answer sequence for menu "1) Setup Iran".
+# Answer sequence for menu "1) Setup Iran Server".
 #   iran_answers 1 45438 45438      -> one foreign
 #   iran_answers 2 45439 45439      -> "2" foreigns, but only the NEW one is
 #                                      prompted for, since already-configured
 #                                      foreigns are reused without asking.
+# A trailing "y" answers the configuration-summary confirmation that runs
+# immediately before anything is applied.
 iran_answers() {
   local count=$1; shift
   printf '1\n%s\n' "$count"   # menu selection, then total number of foreigns
   printf '%s\n' "$@"          # frontend/inbound pairs for the new foreigns only
+  printf 'y\n'                # confirm the summary before apply
+}
+
+# Answer sequence for menu "1) Setup Iran Server" on an already-configured
+# host: only the foreign count is re-confirmed; existing foreigns are reused
+# without re-prompting, and no apply confirmation is asked when nothing is new.
+iran_rerun() {
+  printf '1\n%s\n' "$1"   # menu selection, then total number of foreigns
 }
 
 # Confirmations are consumed only when actually asked, so allow a generous
@@ -185,9 +191,11 @@ with_confirms() {
   printf '%s' "$out"
 }
 
-# Answer sequence for menu_setup_foreign: foreign IP, setup code.
+# Answer sequence for menu_setup_foreign (code-first): setup code, Iran IP,
+# then a "y" to apply. The index and inbound port come from the code itself.
 foreign_answers() {
-  printf '%s\n%s\n' "$1" "$2"
+  local code=$1 ip=$2
+  printf '%s\n%s\ny\n' "$code" "$ip"
 }
 
 # Extract a value from a state file.
