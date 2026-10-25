@@ -39,6 +39,9 @@ assert_eq "$(grep -c '^    server ' <<<"$frag")" "4" "four lane servers"
 lanes=$(grep -o '127\.0\.0\.1:[0-9]*' <<<"$frag" | sort -u)
 assert_eq "$(wc -l <<<"$lanes")" "4" "all four lane targets are distinct"
 assert_contains "$frag" "check inter 2s" "lane health checking enabled"
+assert_eq "$(grep -c '^    mode tcp$' <<<"$frag")" "2" "frontend and backend explicitly force TCP mode"
+assert_contains "$frag" "timeout client 1h" "frontend uses a long-lived client timeout"
+assert_contains "$frag" "timeout server 1h" "backend uses a long-lived server timeout"
 
 t_start "no traffic generation, shaping or fake-speed features"
 combined=$(cat "$FRAG1" "$HC")
@@ -128,6 +131,10 @@ listen_on "45438"
 # The index and inbound port are read from the setup code itself.
 out=$(run_menu "$(printf '2\n%s\n198.51.100.10\ny\n' "$CODE1")")
 unit=$(cat "$UNIT1")
+assert_contains "$out" "Tunnel Ready" "automatic provisioning reports ready only after checks pass"
+assert_contains "$(cat "$FAKE_SSH_LOG")" "authorized_keys" "foreign setup automatically authorizes its lane key"
+assert_contains "$(cat "$FAKE_SSH_LOG")" "StrictHostKeyChecking=yes" "administrative provisioning keeps strict host-key checking"
+assert_contains "$(cat "$FAKE_SSH_LOG")" "print\\ \\\$4" "remote listener checks use a valid awk field expression"
 assert_contains "$unit" "root@198.51.100.10" "unit targets the Iran host"
 assert_contains "$unit" "-R 127.0.0.1:46101:127.0.0.1:45438" "lane 1 forwards to the Xray inbound"
 assert_contains "$unit" "WantedBy=multi-user.target" "unit starts at boot"

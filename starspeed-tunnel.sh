@@ -38,6 +38,11 @@ SS=${SST_SS:-ss}
 SSH=${SST_SSH:-ssh}
 SSH_KEYGEN=${SST_SSH_KEYGEN:-ssh-keygen}
 SSH_KEYSCAN=${SST_SSH_KEYSCAN:-ssh-keyscan}
+TRUSTED_HOST_FINGERPRINT=${SST_TRUSTED_HOST_FINGERPRINT:-}
+ADMIN_IDENTITY=${SST_ADMIN_IDENTITY:-}
+READY_ATTEMPTS=${SST_READY_ATTEMPTS:-6}
+READY_INITIAL_DELAY=${SST_READY_INITIAL_DELAY:-1}
+ADMIN_CONTROL_SOCKET=''
 
 # Lane / frontend allocation defaults. Ports are *scanned* from here, never
 # hard-coded per foreign.
@@ -429,8 +434,20 @@ backup_file() {
   local src=$1
   [[ -e $src ]] || return 0
   local dst
+  if ! ensure_owned_dir "$SST_BACKUP" 755; then
+    err "backup directory is unavailable: $SST_BACKUP"
+    return 1
+  fi
   dst="$SST_BACKUP/$(basename "$src").$(date -u '+%Y%m%dT%H%M%S').$$.$RANDOM"
-  cp -a -- "$src" "$dst"
+  if ! cp -a -- "$src" "$dst"; then
+    err "backup failed: $src -> $dst"
+    rm -f -- "$dst" 2>/dev/null || true
+    return 1
+  fi
+  if [[ ! -f $dst ]]; then
+    err "backup verification failed: $dst was not created"
+    return 1
+  fi
   log "backup $src -> $dst"
   printf '%s\n' "$dst"
 }
@@ -724,8 +741,12 @@ render_fragment() {
     printf '# %s foreign #%s - generated, do not edit by hand\n' "$APP" "$idx"
     printf 'frontend %s_f%s\n' "$APP" "$idx"
     printf '    bind 0.0.0.0:%s\n' "$frontend"
+    printf '    mode tcp\n'
+    printf '    timeout client 1h\n'
     printf '    default_backend %s_lanes_f%s\n' "$APP" "$idx"
     printf 'backend %s_lanes_f%s\n' "$APP" "$idx"
+    printf '    mode tcp\n'
+    printf '    timeout server 1h\n'
     printf '    balance roundrobin\n'
     printf '    option tcp-check\n'
     local j
@@ -875,8 +896,11 @@ apply_candidate() {
   ok "haproxy -c passed validation"
 
   if (( had_old )); then
-    bak=$(backup_file "$SST_HC")
-    [[ -n $bak ]] && info "  previous config backed up to $bak"
+    if ! bak=$(backup_file "$SST_HC") || [[ -z $bak || ! -f $bak ]]; then
+      err "the current HAProxy configuration could not be backed up; refusing to replace it"
+      return 1
+    fi
+    info "  previous config backed up to $bak"
   fi
 
   mkdir -p "$(dirname "$SST_HC")"
@@ -1186,7 +1210,7 @@ ensure_ssh_key() {
 # Populate known_hosts. With StrictHostKeyChecking=yes an empty or partial file
 # locks the tunnel out, so this refuses to install a bad file.
 ensure_known_hosts() {
-  local idx=$1 host=$2 sshport=$3 kh tmp
+  local idx=$1 host=$2 sshport=$3 kh tmp fingerprints expected
   kh=$(known_hosts_path "$idx")
 
   if [[ -s $kh ]] && ssh-keygen -F "[$host]:$sshport" -f "$kh" >/dev/null 2>&1; then
@@ -1199,7 +1223,7 @@ ensure_known_hosts() {
   fi
 
   tmp=$(mktemp "${TMPDIR:-/tmp}/$APP.kh.XXXXXX")
-  warn "scanning the host key of $host:$sshport (trusted on first use)"
+  warn "scanning the host key of $host:$sshport; it will not be trusted automatically"
   if ! "$SSH_KEYSCAN" -p "$sshport" -T 10 -H "$host" >"$tmp" 2>/dev/null || [[ ! -s $tmp ]]; then
     rm -f -- "$tmp"
     err "could not obtain the host key of $host:$sshport"
@@ -1208,14 +1232,142 @@ ensure_known_hosts() {
     return 1
   fi
 
+  fingerprints=$($SSH_KEYGEN -lf "$tmp" -E sha256 2>/dev/null | awk '{print $2}' | sort -u) || true
+  if [[ -z $fingerprints ]]; then
+    rm -f -- "$tmp"
+    err "could not calculate the scanned SSH host-key fingerprint"
+    return 1
+  fi
+  info "Scanned SSH host-key fingerprint(s):"
+  printf '  %s\n' $fingerprints
+  expected=$TRUSTED_HOST_FINGERPRINT
+  if [[ -z $expected ]]; then
+    prompt_read expected "Trusted SHA256 fingerprint (verify out of band)"
+  fi
+  expected=${expected#SHA256:}
+  if ! grep -qxF "SHA256:$expected" <<<"$fingerprints" && ! grep -qxF "$expected" <<<"$fingerprints"; then
+    rm -f -- "$tmp"
+    err "the trusted fingerprint does not match the scanned Iran SSH host key"
+    return 1
+  fi
+
   mkdir -p "$SST_SSH_DIR"
   chmod 700 "$SST_SSH_DIR"
   install -m 600 /dev/null "$kh"
   cat -- "$tmp" >>"$kh"
   rm -f -- "$tmp"
-  ok "host key of $host:$sshport pinned in $kh"
-  info "  Verify it out of band if this host is not already trusted."
+  ok "verified host key of $host:$sshport pinned in $kh"
   return 0
+}
+
+# Open one short-lived multiplexed administrative connection. OpenSSH may use
+# an agent/key or prompt once on the controlling TTY for a password. The socket
+# contains no credential and is removed when provisioning finishes.
+open_admin_connection() {
+  local idx=$1 host=$2 sshport=$3 kh
+  local -a args=()
+  kh=$(known_hosts_path "$idx")
+  ensure_owned_dir "$SST_BASE" 700 || return 1
+  ADMIN_CONTROL_SOCKET="$SST_BASE/admin-f$idx-$$.sock"
+  [[ -n $ADMIN_IDENTITY ]] && args+=( -o IdentitiesOnly=yes -i "$ADMIN_IDENTITY" )
+  if ! "$SSH" -M -S "$ADMIN_CONTROL_SOCKET" -o ControlMaster=yes -o ControlPersist=120 \
+      -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$kh" \
+      "${args[@]}" -p "$sshport" -fN "root@$host"; then
+    err "administrative SSH authentication failed"
+    err "use an authorized ssh-agent/key, SST_ADMIN_IDENTITY, or the one-time SSH password prompt"
+    ADMIN_CONTROL_SOCKET=''
+    return 1
+  fi
+}
+
+close_admin_connection() {
+  local host=$1
+  [[ -n $ADMIN_CONTROL_SOCKET ]] || return 0
+  "$SSH" -S "$ADMIN_CONTROL_SOCKET" -O exit "$host" >/dev/null 2>&1 || true
+  rm -f -- "$ADMIN_CONTROL_SOCKET" 2>/dev/null || true
+  ADMIN_CONTROL_SOCKET=''
+}
+
+# Install the lane key through the authenticated control connection.
+authorize_key_remote() {
+  local idx=$1 host=$2 sshport=$3 key blob payload remote
+  key=$(ssh_key_path "$idx")
+  [[ -s $key.pub ]] || { err "lane public key is missing: $key.pub"; return 1; }
+  blob=$(awk '{print $2}' "$key.pub")
+  payload=$(base64 <"$key.pub" | tr -d '\n')
+  remote="umask 077; mkdir -p ~/.ssh; chmod 700 ~/.ssh; touch ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; key=\$(printf %s '$payload' | base64 -d); grep -Eq '(^|[[:space:]])$blob([[:space:]]|$)' ~/.ssh/authorized_keys || printf 'restrict,port-forwarding %s\\n' \"\$key\" >> ~/.ssh/authorized_keys"
+  if ! "$SSH" -S "$ADMIN_CONTROL_SOCKET" -T "root@$host" "$remote"; then
+    err "automatic SSH authorization failed; load an authorized admin key into ssh-agent"
+    err "or set SST_ADMIN_IDENTITY to an existing authorized private-key path"
+    return 1
+  fi
+  ok "lane key authorized on Iran without replacing existing authorized_keys entries"
+}
+
+remote_lane_listeners_ready() {
+  local idx=$1 host=$2 sshport=$3 cmd j lane
+  cmd='set -e; '
+  for j in 1 2 3 4; do
+    lane=$(state_get "$idx" "LANE$j")
+    cmd+="ss -H -lnt | awk '{print \$4}' | grep -Eq '127[.]0[.]0[.]1:${lane}\$'; "
+  done
+  "$SSH" -S "$ADMIN_CONTROL_SOCKET" -T "root@$host" "$cmd"
+}
+
+remote_tunnel_health() {
+  local idx=$1 host=$2 sshport=$3 frontend cmd j lane
+  frontend=$(state_frontend "$idx")
+  cmd="haproxy -c -f /etc/haproxy/haproxy.cfg >/dev/null && ss -H -lnt | awk '{print \$4}' | grep -Eq '(^|:)$frontend\$' && timeout 3 bash -c '</dev/tcp/127.0.0.1/$frontend'"
+  for j in 1 2 3 4; do
+    lane=$(state_get "$idx" "LANE$j")
+    cmd+=" && timeout 3 bash -c '</dev/tcp/127.0.0.1/$lane'"
+  done
+  if ! "$SSH" -S "$ADMIN_CONTROL_SOCKET" -T "root@$host" "$cmd"; then
+    err "Iran-side HAProxy/frontend/lane TCP verification failed"
+    return 1
+  fi
+  ok "HAProxy config, public frontend and all lane TCP paths verified"
+}
+
+detect_local_ws_path() {
+  local inbound=$1 cfg
+  command -v python3 >/dev/null 2>&1 || return 1
+  for cfg in /usr/local/x-ui/bin/config.json /etc/xray/config.json /usr/local/etc/xray/config.json; do
+    [[ -r $cfg ]] || continue
+    python3 - "$cfg" "$inbound" <<'PY' 2>/dev/null && return 0
+import json,sys
+try:
+    data=json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+port=int(sys.argv[2])
+for inbound in data.get("inbounds", []):
+    if int(inbound.get("port", 0)) != port:
+        continue
+    stream=inbound.get("streamSettings") or {}
+    if stream.get("network") == "ws":
+        print((stream.get("wsSettings") or {}).get("path") or "/")
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+  done
+  return 1
+}
+
+verify_public_websocket() {
+  local host=$1 port=$2 path=$3
+  command -v python3 >/dev/null 2>&1 || { warn "python3 unavailable; WebSocket probe skipped"; return 0; }
+  python3 - "$host" "$port" "$path" <<'PY'
+import base64,os,socket,sys
+host,port,path=sys.argv[1],int(sys.argv[2]),sys.argv[3]
+s=socket.create_connection((host,port),5); s.settimeout(5)
+key=base64.b64encode(os.urandom(16)).decode()
+request=(f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+         f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n")
+s.sendall(request.encode())
+status=s.recv(256).split(b"\r\n",1)[0]
+raise SystemExit(0 if b" 101 " in status else 1)
+PY
 }
 
 # Does a TCP listener exist on the given local port?
@@ -1290,12 +1442,32 @@ EOF
 }
 
 enable_units() {
-  local idx=$1 j svc
+  local idx=$1 j svc failed=0
   for j in 1 2 3 4; do
     svc="$APP-f$idx-lane$j.service"
-    "$SYSTEMCTL" enable "$svc" >/dev/null 2>&1 || warn "could not enable $svc at boot"
-    "$SYSTEMCTL" restart  "$svc" >/dev/null 2>&1 || warn "could not start $svc"
+    "$SYSTEMCTL" enable "$svc" >/dev/null 2>&1 || { err "could not enable $svc at boot"; failed=1; }
+    "$SYSTEMCTL" restart  "$svc" >/dev/null 2>&1 || { err "could not start $svc"; failed=1; }
   done
+  (( failed == 0 ))
+}
+
+wait_for_tunnel_ready() {
+  local idx=$1 host=$2 sshport=$3 attempt j svc all_active delay=$READY_INITIAL_DELAY
+  for (( attempt=1; attempt<=READY_ATTEMPTS; attempt++ )); do
+    all_active=1
+    for j in 1 2 3 4; do
+      svc="$APP-f$idx-lane$j.service"
+      [[ $(systemctl_is_active "$svc") == active ]] || all_active=0
+    done
+    if (( all_active )) && remote_lane_listeners_ready "$idx" "$host" "$sshport"; then
+      ok "all four lane services and reverse listeners are ready"
+      return 0
+    fi
+    (( delay > 0 )) && sleep "$delay"
+    (( delay > 0 && delay < 8 )) && delay=$((delay * 2))
+  done
+  err "lane readiness timed out; inspect the four lane journals for authentication or reverse-port conflicts"
+  return 1
 }
 
 menu_setup_foreign() {
@@ -1387,9 +1559,43 @@ menu_setup_foreign() {
     err "host key not pinned; refusing to start lanes with an empty known_hosts"
     return 1
   fi
+  if ! open_admin_connection "$idx" "$ip" "$sshport"; then
+    err "automatic provisioning stopped before lane services were changed"
+    return 1
+  fi
+  if ! authorize_key_remote "$idx" "$ip" "$sshport"; then
+    close_admin_connection "root@$ip"
+    err "automatic provisioning stopped before lane services were changed"
+    info "Advanced recovery remains available as menu option 3 on the Iran server."
+    return 1
+  fi
 
   write_units "$idx" "$ip" "$inbound" "$sshport" "${lane_arr[@]}"
-  enable_units "$idx"
+  if ! enable_units "$idx"; then
+    close_admin_connection "root@$ip"
+    err "one or more lane services could not be started"
+    return 1
+  fi
+  if ! wait_for_tunnel_ready "$idx" "$ip" "$sshport"; then
+    close_admin_connection "root@$ip"
+    return 1
+  fi
+  if ! remote_tunnel_health "$idx" "$ip" "$sshport"; then
+    close_admin_connection "root@$ip"
+    return 1
+  fi
+  local ws_path=''
+  if ws_path=$(detect_local_ws_path "$inbound"); then
+    if ! verify_public_websocket "$ip" "$SC_FRONTEND" "$ws_path"; then
+      err "WebSocket upgrade through the public frontend failed for path $ws_path"
+      close_admin_connection "root@$ip"
+      return 1
+    fi
+    ok "WebSocket upgrade verified through the public frontend ($ws_path)"
+  else
+    info "No local WebSocket transport was detected for this inbound; TCP verification was used."
+  fi
+  close_admin_connection "root@$ip"
 
   sleep 2
   step "$(t foreign.lane_status)"
@@ -1404,10 +1610,12 @@ menu_setup_foreign() {
     fi
   done
   hr
-  info "$(t foreign.pubkey_header):"
-  cat "$(ssh_key_path "$idx").pub"
-  info ""
-  info "  $(t foreign.next_steps "$up")"
+  if (( up == 4 )); then
+    ok "Tunnel Ready: 4/4 lane services and reverse listeners verified"
+  else
+    err "Tunnel is not ready: only $up/4 lane services are active"
+    return 1
+  fi
   return 0
 }
 

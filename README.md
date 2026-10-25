@@ -14,6 +14,7 @@ units; it does not modify Xray/3x-ui.
 - Validation and timestamped backups before HAProxy changes.
 - Idempotent setup, repair and removal.
 - Strict SSH host-key checking and secret-free setup codes.
+- Automatic key authorization, lane startup and bounded readiness checks.
 - English-only CLI for consistent SSH terminal rendering.
 
 ## Quick Install / Run
@@ -65,10 +66,15 @@ destination. Foreign servers remain isolated from one another.
 
 1. On Iran, select `1) Setup Iran Server`, enter the public frontend and
    existing foreign Xray port, confirm, then copy the generated setup code.
-2. On the foreign server, select `2) Setup Foreign Server`, paste the setup
-   code, enter the Iran address and confirm. Copy the printed SSH public key.
-3. Back on Iran, select `3) Authorize Foreign SSH Key` and paste that key.
-4. Select `4) Tunnel Status` to verify the frontend, HAProxy and all four lanes.
+2. Verify the Iran SSH host-key fingerprint through a trusted channel. The
+   foreign server can use an already-authorized `ssh-agent`/key, an identity set
+   with `SST_ADMIN_IDENTITY`, or one secure one-time OpenSSH password prompt.
+3. Select `2) Setup Foreign Server`, paste the setup code and trusted SHA256
+   fingerprint, then confirm. The tool authorizes its dedicated restricted key,
+   starts only that node's lanes, and verifies the reverse listeners, HAProxy,
+   frontend and TCP path automatically. WebSocket is also probed when detected.
+4. `Tunnel Ready` is printed only after all required checks pass. Menu option
+   `3` remains available solely for advanced recovery.
 
 The Xray inbound must already exist and be listening. Setup codes contain port
 allocation only—never credentials or private keys.
@@ -121,7 +127,11 @@ Common causes:
 - `nothing is listening on 127.0.0.1:<port>`: the foreign Xray inbound is not
   listening; StarSpeed does not create or alter it.
 - `Lane N: DOWN`: inspect the corresponding foreign systemd lane service.
-- `host key not pinned`: ensure `ssh-keyscan` can reach the Iran SSH service.
+- `host key not pinned`: verify the displayed SHA256 fingerprint out of band;
+  unknown or changed keys are never accepted automatically.
+- `automatic SSH authorization failed`: load an existing Iran administrative
+  key into `ssh-agent`, run once with `SST_ADMIN_IDENTITY=/secure/key/path`, or
+  use the one-time password prompt. The credential is never stored.
 
 Tests run in disposable sandboxes:
 

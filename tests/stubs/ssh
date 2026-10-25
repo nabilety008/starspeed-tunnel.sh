@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -uo pipefail
+[[ ${FAKE_SSH_FAIL:-0} == 1 ]] && exit 255
+joined=$*
+[[ ${FAKE_SSH_AUTH_FAIL:-0} == 1 && $joined == *authorized_keys* ]] && exit 255
+[[ ${FAKE_SSH_HEALTH_FAIL:-0} == 1 && $joined != *authorized_keys* ]] && exit 1
+[[ -n ${FAKE_SSH_LOG:-} ]] && printf '%q ' "$@" >>"$FAKE_SSH_LOG" && printf '\n' >>"$FAKE_SSH_LOG"
+exit 0
