@@ -146,7 +146,10 @@ if [[ $code =~ ^[A-Za-z0-9+/=]+$ ]]; then
 else
   t_fail "setup code is base64, so it survives copy/paste" "got: [$code]"
 fi
-assert_not_contains "$code" "PRIVATE" "setup code carries no key material"
+decoded_code=$(printf '%s' "$code" | base64 -d 2>/dev/null || printf '%s' "$code" | openssl base64 -d -A)
+assert_contains "$decoded_code" "PAIR_EXPIRY=" "setup code carries an explicit expiry"
+assert_contains "$decoded_code" "IRAN_HOST_FINGERPRINT=SHA256:" "setup code pins Iran SSH identity"
+assert_contains "$decoded_code" "PAIR_KEY_B64=" "setup code carries the restricted one-time credential"
 
 parsed=$(CODE=$code bash -c 'set -uo pipefail
   source "$1" --help >/dev/null
@@ -169,17 +172,17 @@ reject_code() {
   assert_eq "$r" "rejected" "$label"
 }
 
-hdr='STARPEED-TUNNEL-SETUP v1'
-reject_code "out-of-range frontend port rejected"  "$(printf '%s\nFOREIGN=1\nFRONTEND=99999\nINBOUND=1\nLANE1=1\nLANE2=2\nLANE3=3\nLANE4=4\n' "$hdr" | b64enc)"
-reject_code "foreign index 5 rejected"            "$(printf '%s\nFOREIGN=5\nFRONTEND=100\nINBOUND=1\nLANE1=1\nLANE2=2\nLANE3=3\nLANE4=4\n' "$hdr" | b64enc)"
-reject_code "missing LANE4 rejected"              "$(printf '%s\nFOREIGN=1\nFRONTEND=100\nINBOUND=1\nLANE1=1\nLANE2=2\nLANE3=3\n' "$hdr" | b64enc)"
-reject_code "lane colliding with frontend rejected" "$(printf '%s\nFOREIGN=1\nFRONTEND=100\nINBOUND=1\nLANE1=100\nLANE2=2\nLANE3=3\nLANE4=4\n' "$hdr" | b64enc)"
-reject_code "duplicate lane ports rejected"       "$(printf '%s\nFOREIGN=1\nFRONTEND=100\nINBOUND=1\nLANE1=5\nLANE2=5\nLANE3=3\nLANE4=4\n' "$hdr" | b64enc)"
-reject_code "unknown key rejected"                "$(printf '%s\nFOREIGN=1\nFRONTEND=100\nINBOUND=1\nLANE1=1\nLANE2=2\nLANE3=3\nLANE4=4\nEVIL=1\n' "$hdr" | b64enc)"
-reject_code "wrong version header rejected"       "$(printf 'STARPEED-TUNNEL-SETUP v9\nFOREIGN=1\nFRONTEND=100\nINBOUND=1\nLANE1=1\nLANE2=2\nLANE3=3\nLANE4=4\n' | b64enc)"
+reject_code "out-of-range frontend port rejected"  "$(sed 's/^FRONTEND=.*/FRONTEND=99999/' <<<"$decoded_code" | b64enc)"
+reject_code "foreign index 5 rejected"            "$(sed 's/^FOREIGN=.*/FOREIGN=5/' <<<"$decoded_code" | b64enc)"
+reject_code "missing LANE4 rejected"              "$(grep -v '^LANE4=' <<<"$decoded_code" | b64enc)"
+reject_code "lane colliding with frontend rejected" "$(sed 's/^LANE1=.*/LANE1=45438/' <<<"$decoded_code" | b64enc)"
+reject_code "duplicate lane ports rejected"       "$(sed 's/^LANE2=.*/LANE2=46101/' <<<"$decoded_code" | b64enc)"
+reject_code "unknown key rejected"                "$(printf '%s\nEVIL=1\n' "$decoded_code" | b64enc)"
+reject_code "wrong version header rejected"       "$(sed '1s/v2/v9/' <<<"$decoded_code" | b64enc)"
+reject_code "expired pairing code rejected"       "$(sed 's/^PAIR_EXPIRY=.*/PAIR_EXPIRY=1000000000/' <<<"$decoded_code" | b64enc)"
 reject_code "non-base64 input rejected"           'not base64 at all !!!'
 reject_code "empty input rejected"                ''
-reject_code "lane with shell metacharacters rejected" "$(printf '%s\nFOREIGN=1\nFRONTEND=100\nINBOUND=1\nLANE1=$(id)\nLANE2=2\nLANE3=3\nLANE4=4\n' "$hdr" | b64enc)"
+reject_code "lane with shell metacharacters rejected" "$(sed 's/^LANE1=.*/LANE1=$(id)/' <<<"$decoded_code" | b64enc)"
 
 # ---------------------------------------------------------------------------
 t_start "port allocation"

@@ -52,6 +52,32 @@ else
 fi
 assert_contains "$(cat "$SANDBOX/health.out")" "verification failed" "reverse-port/HAProxy failure is actionable"
 
+t_start "pairing credential is forced-command, scoped and replay-safe"
+code=$(bash -c 'source "$1" --help >/dev/null; emit_setup_code 1' _ "$SCRIPT")
+decoded=$(printf '%s' "$code" | base64 -d 2>/dev/null || printf '%s' "$code" | openssl base64 -d -A)
+pair_id=$(awk -F= '$1=="PAIR_ID"{print $2}' <<<"$decoded")
+pair_hash=$(awk -F= '$1=="PAIR_CONFIG_HASH"{print $2}' <<<"$decoded")
+assert_contains "$(cat "$SSH_DIR/authorized_keys")" "command=\"$SCRIPT --pair-enroll $pair_id\",restrict" "temporary key is restricted to the pairing handler"
+pub64=$(base64 <"$SSH_DIR/starspeed-tunnel_f1.pub" | tr -d '\n')
+if SSH_ORIGINAL_COMMAND="enroll $pair_hash $pub64" bash -c 'source "$1" --help >/dev/null; pair_enroll_handler "$2"' _ "$SCRIPT" "$pair_id" >/dev/null 2>&1; then
+  t_ok "first enrollment succeeds"
+else
+  t_fail "first enrollment succeeds"
+fi
+assert_contains "$(cat "$SSH_DIR/authorized_keys")" 'permitlisten="127.0.0.1:46101"' "lane key is limited to its allocated reverse port"
+if SSH_ORIGINAL_COMMAND="enroll $pair_hash $pub64" bash -c 'source "$1" --help >/dev/null; pair_enroll_handler "$2"' _ "$SCRIPT" "$pair_id" >/dev/null 2>&1; then
+  t_ok "same-key retry is idempotent"
+else
+  t_fail "same-key retry is idempotent"
+fi
+ssh-keygen -q -t ed25519 -N '' -f "$SANDBOX/other-key"
+other64=$(base64 <"$SANDBOX/other-key.pub" | tr -d '\n')
+if SSH_ORIGINAL_COMMAND="enroll $pair_hash $other64" bash -c 'source "$1" --help >/dev/null; pair_enroll_handler "$2"' _ "$SCRIPT" "$pair_id" >/dev/null 2>&1; then
+  t_fail "replay with a different key is rejected"
+else
+  t_ok "replay with a different key is rejected"
+fi
+
 t_start "partial lane startup failure does not restart another node"
 : >"$FAKE_SYSTEMD_STATE/starspeed-tunnel-f2-lane1.service.active"
 before=$(stat -c %Y "$FAKE_SYSTEMD_STATE/starspeed-tunnel-f2-lane1.service.active")

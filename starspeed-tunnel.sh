@@ -45,6 +45,10 @@ READY_INITIAL_DELAY=${SST_READY_INITIAL_DELAY:-1}
 ADMIN_CONTROL_SOCKET=''
 ADVANCED_STATUS=${SST_ADVANCED_STATUS:-0}
 TCP_PROBE=${SST_TCP_PROBE:-}
+HOST_KEY_PUB=${SST_HOST_KEY_PUB:-/etc/ssh/ssh_host_ed25519_key.pub}
+PAIR_HANDLER=${SST_PAIR_HANDLER:-/usr/local/sbin/$APP}
+PAIR_TTL=${SST_PAIR_TTL:-600}
+PAIR_DIR=${SST_PAIR_DIR:-$SST_BASE/pairings}
 
 # Lane / frontend allocation defaults. Ports are *scanned* from here, never
 # hard-coded per foreign.
@@ -52,7 +56,7 @@ LANE_SCAN_BASE=${SST_LANE_SCAN_BASE:-46000}
 LANE_SCAN_STEP=${SST_LANE_SCAN_STEP:-100}
 IRAN_SSH_PORT=${SST_IRAN_SSH_PORT:-22}
 
-SETUP_CODE_VERSION=1
+SETUP_CODE_VERSION=2
 HAPROXY_BEGIN='# >>> starspeed-tunnel managed includes >>>'
 HAPROXY_END='# <<< starspeed-tunnel managed includes <<<'
 
@@ -142,8 +146,8 @@ MSG_EN=(
   [help.title]='Help & Documentation'
   [help.arch]='Architecture: Client -> Iran frontend port -> HAProxy -> 4 reverse-SSH lanes -> Foreign -> Xray inbound'
   [help.ports]='Ports: each foreign gets 1 public frontend on Iran, 1 Xray inbound on the foreign, and 4 lane ports on Iran.'
-  [help.code]='Setup code: a base64 blob carrying the allocation. It contains no passwords or private keys.'
-  [help.security]='This tool only reads Xray / 3x-ui. It never disables host-key checking and never stores secrets in setup codes.'
+  [help.code]='Setup code: a short-lived one-time pairing credential bound to the node allocation and Iran SSH identity.'
+  [help.security]='This tool only reads Xray / 3x-ui. It never disables host-key checking or grants the pairing key shell access.'
   [help.full]='Full documentation: README.md (English) and README.fa.md (Persian).'
 
   [iran.title]='Setup Iran Server'
@@ -160,7 +164,7 @@ MSG_EN=(
   [iran.confirm_apply]='Apply this HAProxy configuration?'
   [iran.applying]='Applying HAProxy configuration'
   [iran.configured]='Iran is configured'
-  [iran.code_header]='Setup codes - transfer each to its foreign server (no secrets inside)'
+  [iran.code_header]='One-time setup codes - transfer privately; each expires after 10 minutes'
   [iran.next_steps]="On each foreign server run: sudo ./$APP then choose '2) Setup Foreign Server' and paste its code."
   [iran.authorize_hint]="After a foreign prints its SSH public key, authorize it here with option 3."
 
@@ -636,18 +640,74 @@ state_valid() {
 b64enc() { openssl base64 -A 2>/dev/null || base64 -w0; }
 b64dec() { openssl base64 -d -A 2>/dev/null || base64 -d; }
 
-# A single base64 blob so the block survives copy/paste through any chat client
-# without newline or quoting damage. It carries no secrets.
+# Pairing uses a short-lived SSH key whose forced command can only enroll the
+# dedicated lane key for the exact node/ports in this code.  It cannot open a
+# shell or forward traffic.  The Iran SSH host-key fingerprint is embedded so
+# the foreign verifies server identity without a trust-on-first-use prompt.
+pair_config_hash() {
+  local idx=$1
+  { printf 'FOREIGN=%s\nFRONTEND=%s\nINBOUND=%s\n' "$idx" "$(state_frontend "$idx")" "$(state_inbound "$idx")"
+    state_lanes "$idx" | awk '{print "LANE" NR "=" $0}'
+  } | sha256sum | awk '{print $1}'
+}
+
+cleanup_expired_pairings() {
+  [[ -d $PAIR_DIR ]] || return 0
+  local f expiry id now; now=$(date +%s)
+  for f in "$PAIR_DIR"/*.env; do
+    [[ -f $f ]] || continue
+    expiry=$(awk -F= '$1=="EXPIRY"{print $2}' "$f")
+    id=$(basename "$f" .env)
+    if [[ $expiry =~ ^[0-9]+$ ]] && (( expiry < now )); then
+      sed -i "/starspeed-pair-$id$/d" "$SST_SSH_DIR/authorized_keys" 2>/dev/null || true
+      rm -f -- "$PAIR_DIR/$id" "$PAIR_DIR/$id.pub" "$PAIR_DIR/$id.env" "$PAIR_DIR/$id.used"
+    fi
+  done
+}
+
+create_pairing() {
+  local idx=$1 id key expiry hash fp auth tmp
+  [[ -r $HOST_KEY_PUB ]] || { err "Iran ED25519 SSH host public key is unavailable"; return 1; }
+  ensure_owned_dir "$PAIR_DIR" 700 || return 1
+  ensure_owned_dir "$SST_SSH_DIR" 700 || return 1
+  cleanup_expired_pairings
+  id=$(openssl rand -hex 12) || return 1
+  key="$PAIR_DIR/$id"; expiry=$(( $(date +%s) + PAIR_TTL )); hash=$(pair_config_hash "$idx")
+  "$SSH_KEYGEN" -q -t ed25519 -N '' -C "$APP-pair-$id" -f "$key" || return 1
+  chmod 600 "$key"; chmod 644 "$key.pub"
+  fp=$($SSH_KEYGEN -lf "$HOST_KEY_PUB" -E sha256 | awk '{print $2}')
+  [[ $fp == SHA256:* ]] || { rm -f -- "$key" "$key.pub"; return 1; }
+  {
+    printf 'FOREIGN=%s\nFRONTEND=%s\nINBOUND=%s\nEXPIRY=%s\nCONFIG_HASH=%s\n' \
+      "$idx" "$(state_frontend "$idx")" "$(state_inbound "$idx")" "$expiry" "$hash"
+    local j; for j in 1 2 3 4; do printf 'LANE%s=%s\n' "$j" "$(state_get "$idx" "LANE$j")"; done
+  } >"$PAIR_DIR/$id.env"
+  chmod 600 "$PAIR_DIR/$id.env"
+  auth="$SST_SSH_DIR/authorized_keys"; touch "$auth"; chmod 600 "$auth"
+  backup_file "$auth" >/dev/null || { rm -f -- "$key" "$key.pub" "$PAIR_DIR/$id.env"; return 1; }
+  tmp="$auth.tmp.$$"
+  grep -v "starspeed-pair-$id$" "$auth" >"$tmp" || true
+  printf 'command="%s --pair-enroll %s",restrict %s starspeed-pair-%s\n' \
+    "$PAIR_HANDLER" "$id" "$(cat "$key.pub")" "$id" >>"$tmp"
+  chmod 600 "$tmp"; mv -f -- "$tmp" "$auth"
+  PAIR_ID=$id PAIR_EXPIRY=$expiry PAIR_HASH=$hash PAIR_FP=$fp PAIR_KEY_B64=$(base64 <"$key" | tr -d '\n')
+}
+
+# A single base64 blob survives copy/paste. It contains a time-limited pairing
+# credential; treat it like a one-time password and do not log or reuse it.
 emit_setup_code() {
   local idx=$1 ip=${2:-} f payload
   f=$(state_file "$idx")
   [[ -f $f ]] || return 1
+  create_pairing "$idx" || return 1
   payload=$(awk -F= '/^(FOREIGN|FRONTEND|INBOUND|LANE[1-4])=/{printf "%s%s=%s", (n++?"\n":""), $1, $2}' "$f")
   {
     printf 'STARPEED-TUNNEL-SETUP v%s\n' "$SETUP_CODE_VERSION"
     printf '%s\n' "$payload"
     if [[ -n $ip ]]; then printf 'IRAN_IP=%s\n' "$ip"; fi
     printf 'IRAN_SSH_PORT=%s\n' "$IRAN_SSH_PORT"
+    printf 'PAIR_ID=%s\nPAIR_EXPIRY=%s\nPAIR_CONFIG_HASH=%s\n' "$PAIR_ID" "$PAIR_EXPIRY" "$PAIR_HASH"
+    printf 'IRAN_HOST_FINGERPRINT=%s\nPAIR_KEY_B64=%s\n' "$PAIR_FP" "$PAIR_KEY_B64"
   } | b64enc
 }
 
@@ -658,6 +718,7 @@ emit_setup_code() {
 parse_setup_code() {
   local raw=$1 text
   SC_IDX=''; SC_FRONTEND=''; SC_INBOUND=''; SC_LANES=(); SC_IRAN_IP=''; SC_SSH_PORT="$IRAN_SSH_PORT"
+  SC_PAIR_ID=''; SC_PAIR_EXPIRY=''; SC_PAIR_HASH=''; SC_HOST_FP=''; SC_PAIR_KEY_B64=''
 
   text=$(printf '%s' "$raw" | tr -d '\r' | b64dec 2>/dev/null) || return 1
   [[ -n $text ]] || return 1
@@ -667,7 +728,7 @@ parse_setup_code() {
   [[ $first == "STARPEED-TUNNEL-SETUP v$SETUP_CODE_VERSION" ]] || {
     warn "unrecognised setup code header"; return 1; }
 
-  local line key val seen_f=0 seen_fe=0 seen_in=0 seen_l=0
+  local line key val seen_f=0 seen_fe=0 seen_in=0 seen_l=0 seen_pair=0
   while IFS= read -r line; do
     [[ -n $line ]] || continue
     [[ $line == *=* ]] || continue
@@ -682,12 +743,18 @@ parse_setup_code() {
                    SC_LANES[${key#LANE}-1]=$val; seen_l=$((seen_l+1)) ;;
       IRAN_IP)    valid_host "$val"   || return 1; SC_IRAN_IP=$val ;;
       IRAN_SSH_PORT) valid_port "$val" || return 1; SC_SSH_PORT=$val ;;
+      PAIR_ID) [[ $val =~ ^[a-f0-9]{24}$ ]] || return 1; SC_PAIR_ID=$val; seen_pair=$((seen_pair+1)) ;;
+      PAIR_EXPIRY) [[ $val =~ ^[0-9]{10,}$ ]] || return 1; SC_PAIR_EXPIRY=$val; seen_pair=$((seen_pair+1)) ;;
+      PAIR_CONFIG_HASH) [[ $val =~ ^[a-f0-9]{64}$ ]] || return 1; SC_PAIR_HASH=$val; seen_pair=$((seen_pair+1)) ;;
+      IRAN_HOST_FINGERPRINT) [[ $val =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]] || return 1; SC_HOST_FP=$val; seen_pair=$((seen_pair+1)) ;;
+      PAIR_KEY_B64) [[ $val =~ ^[A-Za-z0-9+/=]+$ ]] || return 1; SC_PAIR_KEY_B64=$val; seen_pair=$((seen_pair+1)) ;;
       *) warn "unexpected key in setup code: $key"; return 1 ;;
     esac
   done <<<"$text"
 
-  (( seen_f && seen_fe && seen_in && seen_l == 4 )) || {
+  (( seen_f && seen_fe && seen_in && seen_l == 4 && seen_pair == 5 )) || {
     warn "setup code is missing required fields"; return 1; }
+  (( SC_PAIR_EXPIRY >= $(date +%s) )) || { warn "setup code has expired"; return 1; }
 
   # No lane may collide with the frontend or with another lane.
   local a
@@ -701,6 +768,11 @@ parse_setup_code() {
 
   # ssh port is used as `-p N`; never let it become an option string.
   valid_port "$SC_SSH_PORT" || return 1
+  local calculated
+  calculated=$({ printf 'FOREIGN=%s\nFRONTEND=%s\nINBOUND=%s\n' "$SC_IDX" "$SC_FRONTEND" "$SC_INBOUND"
+    local j; for j in 1 2 3 4; do printf 'LANE%s=%s\n' "$j" "${SC_LANES[j-1]}"; done
+  } | sha256sum | awk '{print $1}')
+  [[ $calculated == "$SC_PAIR_HASH" ]] || { warn "setup code configuration integrity check failed"; return 1; }
   return 0
 }
 
@@ -1031,9 +1103,12 @@ menu_setup_iran() {
       ok "$(t iran.kept "$idx")"
       info "  frontend : $frontend"
       if [[ $inbound == 0 ]]; then
-        info "  xray in  : selected on the foreign server"
+        warn "this pre-pairing state is missing its foreign Xray port"
+        ask_port inbound "Existing Xray inbound port on the foreign server"
+        new_idx+=( "$idx" ); new_fe+=( "$frontend" ); new_in+=( "$inbound" ); new_lanes+=( "$lanes" )
+        info "  xray in  : $inbound"
       else
-        info "  xray in  : $inbound (legacy setup code)"
+        info "  xray in  : $inbound"
       fi
       [[ $ADVANCED_STATUS == 1 ]] && info "  internal lanes: $lanes"
       continue
@@ -1041,7 +1116,7 @@ menu_setup_iran() {
 
     step "$(t iran.foreign_title "$idx")"
     ask_port frontend "$(t iran.frontend_prompt "$idx")"
-    inbound=0
+    ask_port inbound "Existing Xray inbound port on the foreign server"
 
     if ! check_frontend_port "$idx" "$frontend"; then
       err "frontend port $frontend is unusable; foreign #$idx not configured"
@@ -1070,8 +1145,8 @@ menu_setup_iran() {
   done
   local k
   for k in "${!new_idx[@]}"; do
-    printf '  foreign #%s (new) : public tunnel %s, Xray port selected on foreign\n' \
-      "${new_idx[k]}" "${new_fe[k]}"
+    printf '  foreign #%s (new) : public tunnel %s, Xray port %s\n' \
+      "${new_idx[k]}" "${new_fe[k]}" "${new_in[k]}"
   done
   hr
   # Only gate on a confirmation when there is actually something new to apply;
@@ -1184,6 +1259,67 @@ menu_authorize_key() {
 # ---------------------------------------------------------------------------
 ssh_key_path() { printf '%s/%s_f%s' "$SST_SSH_DIR" "$APP" "$1"; }
 known_hosts_path() { printf '%s/%s_iran%s' "$SST_SSH_DIR" "$APP" "$1"; }
+
+pair_enroll_handler() {
+  local id=$1 meta="$PAIR_DIR/$1.env" used="$PAIR_DIR/$1.used" cmd action hash payload tmp pub blob keyhash auth j opts lock
+  [[ $id =~ ^[a-f0-9]{24}$ && -r $meta ]] || die "invalid or expired pairing"
+  cmd=${SSH_ORIGINAL_COMMAND:-}; read -r action hash payload <<<"$cmd"
+  [[ $hash == "$(awk -F= '$1=="CONFIG_HASH"{print $2}' "$meta")" ]] || die "pairing configuration mismatch"
+  (( $(date +%s) <= $(awk -F= '$1=="EXPIRY"{print $2}' "$meta") )) || die "pairing expired"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/$APP.pub.XXXXXX"); trap 'rm -f -- "$tmp"' RETURN
+  printf '%s' "$payload" | base64 -d >"$tmp" 2>/dev/null || die "invalid enrollment payload"
+  pub=$(cat "$tmp"); valid_pubkey "$pub" || die "invalid lane public key"
+  blob=$(awk '{print $2}' "$tmp"); keyhash=$(printf '%s' "$blob" | sha256sum | awk '{print $1}')
+  if [[ $action == health ]]; then
+    [[ -r $used && $(cat "$used") == "$keyhash" ]] || die "pairing health check rejected"
+    local frontend; frontend=$(awk -F= '$1=="FRONTEND"{print $2}' "$meta")
+    "$HAPROXY" -c -f "$SST_HC" >/dev/null || die "HAProxy configuration invalid"
+    "$SS" -H -lnt | awk '{print $4}' | grep -Eq "(^|:)$frontend$" || die "frontend unavailable"
+    for j in 1 2 3 4; do
+      "$SS" -H -lnt | awk '{print $4}' | grep -Eq "127[.]0[.]0[.]1:$(awk -F= -v k="LANE$j" '$1==k{print $2}' "$meta")$" || die "lane unavailable"
+    done
+    info "PAIRING_HEALTHY"; return 0
+  fi
+  if [[ $action == ack ]]; then
+    [[ -r $used && $(cat "$used") == "$keyhash" ]] || die "pairing acknowledgement rejected"
+    auth="$SST_SSH_DIR/authorized_keys"; sed -i "/starspeed-pair-$id$/d" "$auth"
+    rm -f -- "$PAIR_DIR/$id" "$PAIR_DIR/$id.pub" "$meta" "$used"
+    info "PAIRING_CONSUMED"; return 0
+  fi
+  [[ $action == enroll ]] || die "unsupported pairing action"
+  if [[ -r $used ]]; then
+    [[ $(cat "$used") == "$keyhash" ]] || die "pairing code already used"
+    info "PAIRING_OK"; return 0
+  fi
+  lock="$PAIR_DIR/$id.lock"
+  mkdir "$lock" 2>/dev/null || die "pairing is busy; retry safely"
+  trap 'rm -f -- "$tmp"; rmdir "$lock" 2>/dev/null || true' RETURN
+  if [[ -r $used ]]; then
+    [[ $(cat "$used") == "$keyhash" ]] || die "pairing code already used"
+    info "PAIRING_OK"; return 0
+  fi
+  auth="$SST_SSH_DIR/authorized_keys"; opts='restrict,port-forwarding'
+  for j in 1 2 3 4; do opts+=",permitlisten=\"127.0.0.1:$(awk -F= -v k="LANE$j" '$1==k{print $2}' "$meta")\""; done
+  awk -v b="$blob" '{for(i=1;i<=NF;i++) if($i==b) found=1} END{exit !found}' "$auth" || printf '%s %s\n' "$opts" "$pub" >>"$auth"
+  printf '%s\n' "$keyhash" >"$used"; chmod 600 "$used" "$auth"
+  info "PAIRING_OK"
+}
+
+pairing_known_hosts() {
+  local idx=$1 host=$2 port=$3 kh tmp fps
+  kh=$(known_hosts_path "$idx"); tmp=$(mktemp "${TMPDIR:-/tmp}/$APP.kh.XXXXXX")
+  "$SSH_KEYSCAN" -p "$port" -T 10 -H "$host" >"$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  fps=$($SSH_KEYGEN -lf "$tmp" -E sha256 2>/dev/null | awk '{print $2}')
+  grep -qxF "$SC_HOST_FP" <<<"$fps" || { rm -f "$tmp"; err "Iran SSH host identity does not match the setup code"; return 1; }
+  install -m 600 "$tmp" "$kh"; rm -f "$tmp"
+}
+
+pairing_ssh() {
+  local action=$1 host=$2 port=$3 pairkey=$4 pub=$5 payload kh
+  payload=$(base64 <"$pub" | tr -d '\n'); kh=$(known_hosts_path "$SC_IDX")
+  "$SSH" -i "$pairkey" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="$kh" -p "$port" "root@$host" "$action $SC_PAIR_HASH $payload"
+}
 
 # Generate a key only when there is not already a usable one.
 ensure_ssh_key() {
@@ -1524,11 +1660,10 @@ menu_setup_foreign() {
   require_cmd awk sed grep
   ensure_pkgs
 
-  local ip idx inbound code sshport lanes
+  local ip idx inbound code sshport lanes pairkey
   local -a lane_arr=()
 
-  # The setup code is the source of truth for the allocation, so it is parsed
-  # first. Only the Iran address (which the code does not carry) is asked after.
+  ask_host ip "$(t foreign.ip_prompt)"
   step "$(t foreign.code_prompt)"
   prompt_read code "Setup code (base64)"
   if ! parse_setup_code "$code"; then
@@ -1545,25 +1680,17 @@ menu_setup_foreign() {
     info "  iran  : $(state_get "$idx" IRAN_IP 2>/dev/null || echo '?')"
     [[ $ADVANCED_STATUS == 1 ]] && info "  internal lanes: $(state_lanes "$idx" | tr '\n' ' ')"
     info "  xray  : $(state_inbound "$idx")"
-    if ! confirm "$(t foreign.reoverwrite "$idx")"; then
-      info "$(t foreign.unchanged)"
-      return 0
-    fi
-    info "continuing"
+    [[ $(state_frontend "$idx") == "$SC_FRONTEND" && $(state_inbound "$idx") == "$SC_INBOUND" ]] || {
+      err "existing foreign state differs; refusing to overwrite it"; return 1; }
+    info "matching existing state; retrying idempotently"
   fi
 
-  # The setup code does not carry the Iran address, so it is always requested.
   if [[ -n $SC_IRAN_IP ]]; then
-    ip=$SC_IRAN_IP
-    ok "$(t foreign.ip_from_code)"
-  else
-    ask_host ip "$(t foreign.ip_prompt)"
+    [[ $ip == "$SC_IRAN_IP" ]] || { err "Iran address does not match the setup code"; return 1; }
   fi
 
   inbound=$SC_INBOUND
-  if [[ $inbound == 0 ]]; then
-    ask_port inbound "Existing Xray inbound port on this foreign server"
-  fi
+  [[ $inbound != 0 ]] || { err "fresh zero-password setup code must include the Xray inbound port"; return 1; }
   sshport=$SC_SSH_PORT
   lane_arr=("${SC_LANES[@]}")
   lanes="${lane_arr[*]}"
@@ -1584,11 +1711,6 @@ menu_setup_foreign() {
     return 1
   fi
 
-  if ! confirm "$(t foreign.confirm_apply)"; then
-    info "cancelled; nothing was applied"
-    return 0
-  fi
-
   write_state "$idx" "$SC_FRONTEND" "$inbound" "${lane_arr[@]}"
   # Persist the Iran endpoint for status/repair; it is a validated host.
   local f
@@ -1602,38 +1724,36 @@ menu_setup_foreign() {
     err "no usable SSH key"
     return 1
   fi
-  if ! ensure_known_hosts "$idx" "$ip" "$sshport"; then
-    err "host key not pinned; refusing to start lanes with an empty known_hosts"
+  if ! pairing_known_hosts "$idx" "$ip" "$sshport"; then
+    err "cryptographic Iran host identity verification failed"
     return 1
   fi
-  if ! open_admin_connection "$idx" "$ip" "$sshport"; then
-    err "automatic provisioning stopped before lane services were changed"
+  pairkey=$(mktemp "${TMPDIR:-/tmp}/$APP.pair.XXXXXX")
+  trap 'rm -f -- "$pairkey"' RETURN
+  printf '%s' "$SC_PAIR_KEY_B64" | base64 -d >"$pairkey" 2>/dev/null || { err "invalid pairing credential"; return 1; }
+  chmod 600 "$pairkey"
+  if ! pairing_ssh enroll "$ip" "$sshport" "$pairkey" "$(ssh_key_path "$idx").pub" | grep -q PAIRING_OK; then
+    err "single-use key enrollment failed or the pairing code expired"
     return 1
   fi
-  if ! authorize_key_remote "$idx" "$ip" "$sshport"; then
-    close_admin_connection "root@$ip"
-    err "automatic provisioning stopped before lane services were changed"
-    info "Advanced recovery remains available as menu option 3 on the Iran server."
-    return 1
-  fi
+  ok "dedicated lane key enrolled through restricted one-time pairing"
 
   write_units "$idx" "$ip" "$inbound" "$sshport" "${lane_arr[@]}"
   if ! enable_units "$idx"; then
-    close_admin_connection "root@$ip"
     err "one or more lane services could not be started"
     return 1
   fi
-  if ! wait_for_tunnel_ready "$idx" "$ip" "$sshport"; then
-    close_admin_connection "root@$ip"
-    return 1
-  fi
-  if ! remote_tunnel_health "$idx" "$ip" "$sshport"; then
-    close_admin_connection "root@$ip"
+  local attempt healthy=0
+  for (( attempt=1; attempt<=READY_ATTEMPTS; attempt++ )); do
+    if pairing_ssh health "$ip" "$sshport" "$pairkey" "$(ssh_key_path "$idx").pub" 2>/dev/null | grep -q PAIRING_HEALTHY; then healthy=1; break; fi
+    sleep "$READY_INITIAL_DELAY"
+  done
+  if (( ! healthy )); then
+    err "Iran HAProxy/frontend/reverse-lane health verification failed"
     return 1
   fi
   if ! tcp_forward_healthy "$ip" "$SC_FRONTEND"; then
     err "the public frontend accepts TCP but the end-to-end forward closes immediately"
-    close_admin_connection "root@$ip"
     return 1
   fi
   ok "end-to-end public TCP forwarding verified"
@@ -1641,14 +1761,13 @@ menu_setup_foreign() {
   if ws_path=$(detect_local_ws_path "$inbound"); then
     if ! verify_public_websocket "$ip" "$SC_FRONTEND" "$ws_path"; then
       err "WebSocket upgrade through the public frontend failed for path $ws_path"
-      close_admin_connection "root@$ip"
       return 1
     fi
     ok "WebSocket upgrade verified through the public frontend ($ws_path)"
   else
     info "No local WebSocket transport was detected for this inbound; TCP verification was used."
   fi
-  close_admin_connection "root@$ip"
+  pairing_ssh ack "$ip" "$sshport" "$pairkey" "$(ssh_key_path "$idx").pub" >/dev/null 2>&1 || warn "pairing succeeded but cleanup acknowledgement was not received; expiry cleanup remains active"
 
   sleep 2
   step "$(t foreign.lane_status)"
@@ -1815,10 +1934,10 @@ menu_status() {
     return 0
   fi
 
-  info "Setup codes (safe to transfer; they contain no secrets):"
+  info "Generate a fresh one-time setup code only when needed:"
   for idx in $(configured_foreigns); do
     [[ -n $idx ]] || continue
-    printf '  foreign #%s: %s\n' "$idx" "$(emit_setup_code "$idx")"
+    printf '  sudo %s --setup-code %s\n' "$PAIR_HANDLER" "$idx"
   done
   info ""
   info "Public keys of foreign servers configured on this host:"
@@ -2288,6 +2407,11 @@ main() {
     --help|-h)    usage; return 0 ;;
     --version|-V) printf '%s %s\n' "$APP" "$VERSION"; return 0 ;;
     --role)       get_role; return 0 ;;
+    --pair-enroll)
+      [[ $EUID -eq 0 ]] || die "pairing handler requires root"
+      pair_enroll_handler "${2:-}"
+      return $?
+      ;;
     --lang)
       case ${2:-} in
         en) printf '%s\n' en >"${SST_BASE:-/etc/$APP}/lang" 2>/dev/null \

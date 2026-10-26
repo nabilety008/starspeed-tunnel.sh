@@ -5,4 +5,7 @@ joined=$*
 [[ ${FAKE_SSH_AUTH_FAIL:-0} == 1 && $joined == *authorized_keys* ]] && exit 255
 [[ ${FAKE_SSH_HEALTH_FAIL:-0} == 1 && $joined != *authorized_keys* ]] && exit 1
 [[ -n ${FAKE_SSH_LOG:-} ]] && printf '%q ' "$@" >>"$FAKE_SSH_LOG" && printf '\n' >>"$FAKE_SSH_LOG"
+[[ $joined == *' enroll '* ]] && printf 'PAIRING_OK\n'
+[[ $joined == *' health '* ]] && printf 'PAIRING_HEALTHY\n'
+[[ $joined == *' ack '* ]] && printf 'PAIRING_CONSUMED\n'
 exit 0

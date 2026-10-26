@@ -21,7 +21,7 @@ AUTH=$SSH_DIR/authorized_keys
 
 # ---------------------------------------------------------------------------
 t_start "Iran setup creates managed HAProxy config"
-out=$(run_menu "$(iran_answers 1 45438)")
+out=$(run_menu "$(iran_answers 1 45438 45438)")
 assert_file "$HC" "haproxy.cfg created"
 assert_file "$FRAG1" "Foreign #1 fragment created"
 assert_no_file "$FRAG2" "no Foreign #2 fragment yet"
@@ -95,7 +95,7 @@ assert_contains "$(cat "$HC")" "$OPERATOR_LINE" "operator's own line survived"
 t_start "adding Foreign #2 leaves Foreign #1 byte-identical"
 before1=$(cat "$FRAG1")
 # Foreign #1 already exists, so the installer asks only for the new foreign.
-run_menu "$(iran_answers 2 45439)" >/dev/null
+run_menu "$(iran_answers 2 45439 45439)" >/dev/null
 assert_file "$FRAG2" "Foreign #2 fragment created"
 assert_contains "$(cat "$FRAG2")" "bind 0.0.0.0:45439" "#2 frontend uses the second port"
 assert_contains "$(cat "$HC")" "bind 0.0.0.0:45439" "top-level config now carries both foreigns"
@@ -129,12 +129,12 @@ listen_on "45438"
 
 # Answers: menu 2, setup code, Iran IP, then "y" to apply.
 # The index and inbound port are read from the setup code itself.
-out=$(run_menu "$(printf '2\n%s\n198.51.100.10\n45438\ny\n' "$CODE1")")
+out=$(run_menu "$(printf '2\n198.51.100.10\n%s\n' "$CODE1")")
 unit=$(cat "$UNIT1")
 assert_contains "$out" "Tunnel Ready" "automatic provisioning reports ready only after checks pass"
-assert_contains "$(cat "$FAKE_SSH_LOG")" "authorized_keys" "foreign setup automatically authorizes its lane key"
-assert_contains "$(cat "$FAKE_SSH_LOG")" "StrictHostKeyChecking=yes" "administrative provisioning keeps strict host-key checking"
-assert_contains "$(cat "$FAKE_SSH_LOG")" "print\\ \\\$4" "remote listener checks use a valid awk field expression"
+assert_contains "$(cat "$FAKE_SSH_LOG")" "enroll" "foreign setup automatically enrolls its lane key"
+assert_contains "$(cat "$FAKE_SSH_LOG")" "StrictHostKeyChecking=yes" "pairing keeps strict host-key checking"
+assert_contains "$(cat "$FAKE_SSH_LOG")" "health" "restricted pairing performs Iran-side health verification"
 assert_contains "$unit" "root@198.51.100.10" "unit targets the Iran host"
 assert_contains "$unit" "-R 127.0.0.1:46101:127.0.0.1:45438" "lane 1 forwards to the Xray inbound"
 assert_contains "$unit" "WantedBy=multi-user.target" "unit starts at boot"
@@ -180,25 +180,24 @@ assert_eq "$(grep -c '^foreign' "$STATE/role" 2>/dev/null)" "1" "role file marks
 t_start "foreign setup is idempotent and reuses a healthy keypair"
 before_unit=$(cat "$UNIT1")
 # Code-first: paste the code, confirm the overwrite, give the Iran IP, apply.
-out2=$(run_menu "$(printf '2\n%s\ny\n198.51.100.10\n45438\ny\n' "$CODE1")")
+out2=$(run_menu "$(printf '2\n198.51.100.10\n%s\n' "$CODE1")")
 assert_eq "$(cat "$UNIT1")" "$before_unit" "re-running produces an identical unit"
 assert_contains "$out2" "reusing existing" "existing keypair is reused, not regenerated"
 
-t_start "declining the overwrite leaves the foreign untouched"
-# Declined at the overwrite confirmation, so no IP or apply step is reached.
-out=$(run_menu "$(printf '2\n%s\nn\n' "$CODE1")")
-assert_contains "$out" "left unchanged" "installer honours a declined re-run"
-assert_eq "$(cat "$UNIT1")" "$before_unit" "declined re-run rewrote nothing"
+t_start "idempotent retry leaves the foreign unit unchanged"
+out=$(run_menu "$(printf '2\n198.51.100.10\n%s\n' "$CODE1")")
+assert_contains "$out" "retrying idempotently" "matching state is retried without extra prompts"
+assert_eq "$(cat "$UNIT1")" "$before_unit" "idempotent retry preserves the unit"
 
 t_start "foreign setup refuses to continue when the host key cannot be scanned"
 rm -f "$SSH_DIR/starspeed-tunnel_iran1"
-out=$(FAKE_KEYSCAN_FAIL=1 run_menu "$(printf '2\n%s\ny\n198.51.100.10\n45438\ny\n' "$CODE1")")
-assert_contains "$out" "host key" "installer explains the host key failure"
+out=$(FAKE_KEYSCAN_FAIL=1 run_menu "$(printf '2\n198.51.100.10\n%s\n' "$CODE1")")
+assert_contains "$out" "host identity" "installer explains the host identity failure"
 assert_no_file "$SSH_DIR/starspeed-tunnel_iran1" "no empty known_hosts left behind"
 
 t_start "a malformed setup code is rejected without touching state"
 before_state=$(cat "$STATE/foreign-1.env")
-out=$(run_menu "$(printf '2\nnot-a-real-setup-code\n')")
+out=$(run_menu "$(printf '2\n198.51.100.10\nnot-a-real-setup-code\n')")
 assert_contains "$out" "invalid or unreadable" "malformed code is refused"
 assert_eq "$(cat "$STATE/foreign-1.env")" "$before_state" "no state rewritten on a bad code"
 
@@ -217,7 +216,7 @@ mkdir -p "$HAPROXY_DIR/conf.d"
 printf 'frontend operator_owned\n    bind :9999\n' >"$HAPROXY_DIR/conf.d/operator.cfg"
 
 t_start "Iran is reconfigured with both foreigns"
-run_menu "$(iran_answers 2 45438 45439)" >/dev/null
+run_menu "$(iran_answers 2 45438 45438 45439 45439)" >/dev/null
 
 t_start "a legacy include-based managed block migrates to inlined sections"
 # Recreate exactly what an older install left behind: a managed block holding
@@ -287,7 +286,7 @@ code=$(run_sst --setup-code 1 | tr -d '\r\n')
 assert_ne "$code" "" "setup code emitted"
 decoded=$(printf '%s' "$code" | base64 -d 2>/dev/null || printf '%s' "$code" | openssl base64 -d -A 2>/dev/null)
 assert_contains "$decoded" "FRONTEND=$(front_of 1)" "code carries the exact frontend"
-assert_contains "$decoded" "INBOUND=0" "Iran setup leaves the Xray port for foreign-side selection"
+assert_contains "$decoded" "INBOUND=$(awk -F= '$1==\"INBOUND\"{print $2}' "$STATE/foreign-1.env")" "setup code carries the foreign Xray port"
 assert_contains "$decoded" "LANE4=$(lane_of 1 4)" "code carries the exact lane 4"
 assert_not_contains "$decoded" "PRIVATE" "code carries no key material"
 
@@ -368,7 +367,7 @@ assert_no_file "$STATE/foreign-1.env" "Foreign #1 state removed"
 assert_contains "$(cat "$HC")" "managed includes" "managed block still well-formed with no foreigns"
 
 t_start "a removed foreign can be added again cleanly"
-run_menu "$(iran_answers 2 45438 45439)" >/dev/null  # fresh host: both prompted
+run_menu "$(iran_answers 2 45438 45438 45439 45439)" >/dev/null  # fresh host: both prompted
 assert_file "$FRAG1" "Foreign #1 recreated"
 assert_file "$FRAG2" "Foreign #2 recreated"
 assert_eq "$(front_of 1)" "45438" "Foreign #1 kept its original frontend"
@@ -380,7 +379,7 @@ t_start "Setup Iran works in the same menu session as Uninstall"
 # afterwards (the crash only happens within one menu session).
 # Answers: 9 + three confirms (uninstall, backups, ssh keypair), then the
 # Iran setup answers, then the trailing menu exit.
-out=$(run_menu "$(printf '9\ny\nn\nn\n%s' "$(iran_answers 1 45438)")")
+out=$(run_menu "$(printf '9\ny\nn\nn\n%s' "$(iran_answers 1 45438 45438)")")
 assert_file "$STATE/foreign-1.env" "state re-created after uninstall in the same session"
 assert_file "$STATE/role" "role re-created after uninstall in the same session"
 assert_file "$HC" "haproxy config still present after the re-setup"

@@ -13,7 +13,8 @@ units; it does not modify Xray/3x-ui.
 - Guided setup for one Iran server and up to two foreign servers.
 - Validation and timestamped backups before HAProxy changes.
 - Idempotent setup, repair and removal.
-- Strict SSH host-key checking and secret-free setup codes.
+- Zero-password, short-lived and single-use setup-code pairing.
+- Automatic cryptographic SSH host-key verification.
 - Automatic key authorization, lane startup and bounded readiness checks.
 - English-only CLI for consistent SSH terminal rendering.
 
@@ -64,15 +65,14 @@ destination. Foreign servers remain isolated from one another.
 
 ## Configuration guide
 
-1. On Iran, select `1) Setup Iran Server`, enter only one public tunnel port per
-   foreign server, confirm, then copy the generated setup code. Internal lane
-   ports are allocated automatically and are never user inputs.
-2. Verify the Iran SSH host-key fingerprint through a trusted channel. The
-   foreign server can use an already-authorized `ssh-agent`/key, an identity set
-   with `SST_ADMIN_IDENTITY`, or one secure one-time OpenSSH password prompt.
-3. Select `2) Setup Foreign Server`, paste the setup code, enter the Iran IP and
-   existing local Xray inbound port, verify the trusted SHA256 fingerprint, then
-   confirm. The tool authorizes its dedicated restricted key,
+1. On Iran, select `1) Setup Iran Server`, enter the public tunnel port and the
+   existing foreign Xray inbound port, then copy the generated setup code.
+   Internal lane ports are allocated automatically and are never user inputs.
+2. On the foreign server select `2) Setup Foreign Server` and enter only the
+   Iran IP/hostname and the one-time setup code. The code expires after ten
+   minutes and is bound to that node, its ports and Iran's SSH identity.
+3. The tool verifies the SSH host key, enrolls a dedicated lane key through a
+   forced command that has no shell access, starts the lanes,
    starts only that node's lanes, and verifies the reverse listeners, HAProxy,
    frontend and TCP path automatically. WebSocket is also probed when detected.
 4. `Tunnel Ready` is printed only after all required checks pass. Menu option
@@ -114,6 +114,9 @@ Managed files are stored under `/etc/starspeed-tunnel`; lane units are named
 Internal lane details are hidden from normal status output; run
 `sudo env SST_ADVANCED_STATUS=1 /usr/local/sbin/starspeed-tunnel --status` only
 for advanced diagnostics.
+Pairing codes are credentials: transfer them privately, use them promptly and
+generate a fresh code after expiration. A code can enroll only one lane key for
+its assigned node; retries with that same key are idempotent.
 
 ## Troubleshooting
 
