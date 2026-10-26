@@ -62,13 +62,15 @@ Host Key پین‌شده ایران، چهار سرویس systemd و مقصد Xr
 
 ## راهنمای پیکربندی
 
-1. روی ایران گزینه `1) Setup Iran Server` را انتخاب کنید، Frontend عمومی و پورت
-   Xray موجود روی خارج را وارد و خلاصه را تأیید کنید؛ سپس Setup Code را کپی کنید.
+1. روی ایران گزینه `1) Setup Iran Server` را انتخاب و برای هر سرور خارج فقط پورت
+   عمومی Tunnel را وارد کنید؛ پورت‌های داخلی Lane خودکار تخصیص داده می‌شوند و
+   ورودی کاربر نیستند. سپس Setup Code را کپی کنید.
 2. اثرانگشت SSH سرور ایران را از یک مسیر مطمئن بررسی کنید. اتصال مدیریتی می‌تواند
    از `ssh-agent`، کلید مشخص‌شده با `SST_ADMIN_IDENTITY` یا یک‌بار ورود امن رمز
    از طریق خود OpenSSH استفاده کند؛ رمز ذخیره نمی‌شود.
-3. گزینه `2) Setup Foreign Server` را اجرا و Setup Code، آدرس ایران و اثرانگشت
-   SHA256 تأییدشده را وارد کنید. ابزار کلید محدود اختصاصی را خودکار ثبت می‌کند،
+3. گزینه `2) Setup Foreign Server` را اجرا و Setup Code، آدرس ایران، پورت واقعی
+   Inbound محلی Xray و اثرانگشت SHA256 تأییدشده را وارد کنید. ابزار کلید محدود
+   اختصاصی را خودکار ثبت می‌کند،
    فقط Laneهای همان Node را بالا می‌آورد و Reverse Listenerها، HAProxy، Frontend،
    TCP و در صورت تشخیص WebSocket را کنترل می‌کند.
 4. فقط بعد از عبور همه کنترل‌های لازم پیام `Tunnel Ready` نمایش داده می‌شود.
@@ -106,6 +108,8 @@ sudo /usr/local/sbin/starspeed-tunnel --help
 فایل‌های مدیریت‌شده زیر `/etc/starspeed-tunnel` قرار دارند و سرویس Laneها با الگوی
 `starspeed-tunnel-f<N>-lane<M>.service` ساخته می‌شوند. اطلاعات SSH خارج در
 `/root/.ssh/starspeed-tunnel_*` قرار می‌گیرد. Xray/3x-ui فقط‌خواندنی باقی می‌ماند.
+جزئیات Laneها در وضعیت عادی مخفی است؛ فقط برای عیب‌یابی پیشرفته از دستور
+`sudo env SST_ADVANCED_STATUS=1 /usr/local/sbin/starspeed-tunnel --status` استفاده کنید.
 
 ## عیب‌یابی
 

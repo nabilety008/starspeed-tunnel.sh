@@ -127,6 +127,7 @@ sandbox_new() {
   export SST_SS="$STUBS/ss"
   export SST_SSH="$STUBS/ssh"
   export SST_SSH_KEYSCAN="$STUBS/ssh-keyscan"
+  export SST_TCP_PROBE="$STUBS/tcp-probe"
   export SST_TRUSTED_HOST_FINGERPRINT='SHA256:b1NvhIYg7LdQRhqTXmfzawcNvAw/zS6XuoK/2Btod7M'
   export SST_READY_ATTEMPTS=1
   export SST_READY_INITIAL_DELAY=0
@@ -169,16 +170,14 @@ run_sst() {
 }
 
 # Answer sequence for menu "1) Setup Iran Server".
-#   iran_answers 1 45438 45438      -> one foreign
-#   iran_answers 2 45439 45439      -> "2" foreigns, but only the NEW one is
-#                                      prompted for, since already-configured
-#                                      foreigns are reused without asking.
+#   iran_answers 1 45438      -> one foreign, public port 45438
+#   iran_answers 2 45439      -> add foreign #2 with public port 45439
 # A trailing "y" answers the configuration-summary confirmation that runs
 # immediately before anything is applied.
 iran_answers() {
   local count=$1; shift
   printf '1\n%s\n' "$count"   # menu selection, then total number of foreigns
-  printf '%s\n' "$@"          # frontend/inbound pairs for the new foreigns only
+  printf '%s\n' "$@"          # public frontend for each new foreign only
   printf 'y\n'                # confirm the summary before apply
 }
 
@@ -202,8 +201,8 @@ with_confirms() {
 # Answer sequence for menu_setup_foreign (code-first): setup code, Iran IP,
 # then a "y" to apply. The index and inbound port come from the code itself.
 foreign_answers() {
-  local code=$1 ip=$2
-  printf '%s\n%s\ny\n' "$code" "$ip"
+  local code=$1 ip=$2 inbound=$3
+  printf '%s\n%s\n%s\ny\n' "$code" "$ip" "$inbound"
 }
 
 # Extract a value from a state file.

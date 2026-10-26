@@ -64,13 +64,15 @@ destination. Foreign servers remain isolated from one another.
 
 ## Configuration guide
 
-1. On Iran, select `1) Setup Iran Server`, enter the public frontend and
-   existing foreign Xray port, confirm, then copy the generated setup code.
+1. On Iran, select `1) Setup Iran Server`, enter only one public tunnel port per
+   foreign server, confirm, then copy the generated setup code. Internal lane
+   ports are allocated automatically and are never user inputs.
 2. Verify the Iran SSH host-key fingerprint through a trusted channel. The
    foreign server can use an already-authorized `ssh-agent`/key, an identity set
    with `SST_ADMIN_IDENTITY`, or one secure one-time OpenSSH password prompt.
-3. Select `2) Setup Foreign Server`, paste the setup code and trusted SHA256
-   fingerprint, then confirm. The tool authorizes its dedicated restricted key,
+3. Select `2) Setup Foreign Server`, paste the setup code, enter the Iran IP and
+   existing local Xray inbound port, verify the trusted SHA256 fingerprint, then
+   confirm. The tool authorizes its dedicated restricted key,
    starts only that node's lanes, and verifies the reverse listeners, HAProxy,
    frontend and TCP path automatically. WebSocket is also probed when detected.
 4. `Tunnel Ready` is printed only after all required checks pass. Menu option
@@ -109,6 +111,9 @@ English menu.
 Managed files are stored under `/etc/starspeed-tunnel`; lane units are named
 `starspeed-tunnel-f<N>-lane<M>.service`. Foreign SSH material is stored in
 `/root/.ssh/starspeed-tunnel_*`. Xray/3x-ui configuration remains read-only.
+Internal lane details are hidden from normal status output; run
+`sudo env SST_ADVANCED_STATUS=1 /usr/local/sbin/starspeed-tunnel --status` only
+for advanced diagnostics.
 
 ## Troubleshooting
 

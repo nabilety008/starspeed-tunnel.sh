@@ -18,8 +18,9 @@ done
 
 emit() {
   local port=$1
+  local bind=${FAKE_SS_BIND:-0.0.0.0}
   [[ $has_flag == 1 ]] || printf 'State  Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
-  printf 'LISTEN 0      128        0.0.0.0:%s                0.0.0.0:*\n' "$port"
+  printf 'LISTEN 0      128        %s:%s                0.0.0.0:*\n' "$bind" "$port"
 }
 
 if [[ -n $DIR && -d $DIR ]]; then

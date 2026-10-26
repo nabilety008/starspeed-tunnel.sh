@@ -43,6 +43,8 @@ ADMIN_IDENTITY=${SST_ADMIN_IDENTITY:-}
 READY_ATTEMPTS=${SST_READY_ATTEMPTS:-6}
 READY_INITIAL_DELAY=${SST_READY_INITIAL_DELAY:-1}
 ADMIN_CONTROL_SOCKET=''
+ADVANCED_STATUS=${SST_ADVANCED_STATUS:-0}
+TCP_PROBE=${SST_TCP_PROBE:-}
 
 # Lane / frontend allocation defaults. Ports are *scanned* from here, never
 # hard-coded per foreign.
@@ -475,7 +477,7 @@ state_allocated_ports() {
   local f
   for f in "$SST_STATE"/foreign-*.env; do
     [[ -f $f ]] || continue
-    awk -F= '/^(FRONTEND|INBOUND|LANE[1-4])=/{print $2}' "$f"
+    awk -F= '/^(FRONTEND|INBOUND|LANE[1-4])=/{if ($2 != "0") print $2}' "$f"
   done
 }
 
@@ -617,7 +619,9 @@ state_valid() {
   state_exists "$idx" || return 1
   valid_index "$idx" || return 1
   valid_port "$(state_frontend "$idx")" || return 1
-  valid_port "$(state_inbound "$idx")" || return 1
+  local inbound
+  inbound=$(state_inbound "$idx") || return 1
+  [[ $inbound == 0 ]] || valid_port "$inbound" || return 1
   local j p
   for j in 1 2 3 4; do
     p=$(state_get "$idx" "LANE$j") || return 1
@@ -672,7 +676,7 @@ parse_setup_code() {
     case $key in
       FOREIGN)    valid_index "$val" || return 1; SC_IDX=$val; seen_f=1 ;;
       FRONTEND)   valid_port "$val"   || return 1; SC_FRONTEND=$val; seen_fe=1 ;;
-      INBOUND)    valid_port "$val"   || return 1; SC_INBOUND=$val; seen_in=1 ;;
+      INBOUND)    [[ $val == 0 ]] || valid_port "$val" || return 1; SC_INBOUND=$val; seen_in=1 ;;
       LANE1|LANE2|LANE3|LANE4)
                    valid_port "$val" || return 1
                    SC_LANES[${key#LANE}-1]=$val; seen_l=$((seen_l+1)) ;;
@@ -1026,18 +1030,18 @@ menu_setup_iran() {
       lanes=$(state_lanes "$idx" | tr '\n' ' ')
       ok "$(t iran.kept "$idx")"
       info "  frontend : $frontend"
-      info "  xray in  : $inbound (on the foreign server)"
-      info "  lanes    : $lanes"
+      if [[ $inbound == 0 ]]; then
+        info "  xray in  : selected on the foreign server"
+      else
+        info "  xray in  : $inbound (legacy setup code)"
+      fi
+      [[ $ADVANCED_STATUS == 1 ]] && info "  internal lanes: $lanes"
       continue
     fi
 
     step "$(t iran.foreign_title "$idx")"
     ask_port frontend "$(t iran.frontend_prompt "$idx")"
-    ask_port inbound "$(t iran.inbound_prompt "$idx")"
-
-    if [[ $frontend == "$inbound" ]]; then
-      warn "$(t iran.same_port)"
-    fi
+    inbound=0
 
     if ! check_frontend_port "$idx" "$frontend"; then
       err "frontend port $frontend is unusable; foreign #$idx not configured"
@@ -1049,7 +1053,8 @@ menu_setup_iran() {
       continue
     fi
 
-    ok "$(t iran.lanes "$lanes")"
+    ok "internal lane ports allocated automatically"
+    [[ $ADVANCED_STATUS == 1 ]] && info "  internal lanes: $lanes"
     new_idx+=( "$idx" ); new_fe+=( "$frontend" ); new_in+=( "$inbound" ); new_lanes+=( "$lanes" )
   done
 
@@ -1058,15 +1063,15 @@ menu_setup_iran() {
   step "$(t iran.summary)"
   for (( idx = 1; idx <= reply; idx++ )); do
     if state_valid "$idx"; then
-      printf '  foreign #%s (kept): frontend %s, xray %s, lanes %s\n' \
-        "$idx" "$(state_frontend "$idx")" "$(state_inbound "$idx")" \
-        "$(state_lanes "$idx" | tr '\n' ' ')"
+      printf '  foreign #%s (kept): public tunnel %s, Xray port %s\n' \
+        "$idx" "$(state_frontend "$idx")" \
+        "$([[ $(state_inbound "$idx") == 0 ]] && echo 'selected on foreign' || state_inbound "$idx")"
     fi
   done
   local k
   for k in "${!new_idx[@]}"; do
-    printf '  foreign #%s (new) : frontend %s, xray %s, lanes %s\n' \
-      "${new_idx[k]}" "${new_fe[k]}" "${new_in[k]}" "${new_lanes[k]}"
+    printf '  foreign #%s (new) : public tunnel %s, Xray port selected on foreign\n' \
+      "${new_idx[k]}" "${new_fe[k]}"
   done
   hr
   # Only gate on a confirmation when there is actually something new to apply;
@@ -1102,8 +1107,12 @@ menu_setup_iran() {
     hr
     info "Foreign #$f"
     info "  frontend : $(state_frontend "$f")"
-    info "  xray in  : $(state_inbound "$f") (on the foreign server)"
-    info "  lanes    : $(state_lanes "$f" | tr '\n' ' ')"
+    if [[ $(state_inbound "$f") == 0 ]]; then
+      info "  xray in  : selected during foreign setup"
+    else
+      info "  xray in  : $(state_inbound "$f") (legacy setup code)"
+    fi
+    [[ $ADVANCED_STATUS == 1 ]] && info "  internal lanes: $(state_lanes "$f" | tr '\n' ' ')"
     local code
     if code=$(emit_setup_code "$f"); then
       info ""
@@ -1365,15 +1374,53 @@ key=base64.b64encode(os.urandom(16)).decode()
 request=(f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
          f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n")
 s.sendall(request.encode())
-status=s.recv(256).split(b"\r\n",1)[0]
-raise SystemExit(0 if b" 101 " in status else 1)
+data=b""
+while b"\r\n" not in data and len(data) < 4096:
+    chunk=s.recv(512)
+    if not chunk: break
+    data+=chunk
+status=data.split(b"\r\n",1)[0].split()
+raise SystemExit(0 if len(status) >= 2 and status[1] == b"101" else 1)
 PY
 }
 
 # Does a TCP listener exist on the given local port?
 local_listening() {
   local p=$1
-  "$SS" -H -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${p}\$"
+  "$SS" -H -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "(^|[.:])${p}\$"
+}
+
+wait_for_local_listener() {
+  local port=$1 attempt delay=$READY_INITIAL_DELAY
+  for (( attempt=1; attempt<=READY_ATTEMPTS; attempt++ )); do
+    if local_listening "$port"; then
+      ok "Xray inbound is reachable locally on port $port"
+      return 0
+    fi
+    (( delay > 0 )) && sleep "$delay"
+    (( delay > 0 && delay < 8 )) && delay=$((delay * 2))
+  done
+  err "Xray inbound port $port did not become available after bounded retries"
+  return 1
+}
+
+tcp_forward_healthy() {
+  local host=$1 port=$2
+  if [[ -n $TCP_PROBE ]]; then "$TCP_PROBE" "$host" "$port"; return $?; fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$host" "$port" <<'PY' >/dev/null 2>&1
+import socket,sys
+s=socket.create_connection((sys.argv[1],int(sys.argv[2])),2)
+s.settimeout(.35)
+try:
+    data=s.recv(1, socket.MSG_PEEK)
+    raise SystemExit(1 if data == b"" else 0)
+except socket.timeout:
+    raise SystemExit(0)
+PY
+  else
+    timeout 2 bash -c "</dev/tcp/$host/$port" >/dev/null 2>&1
+  fi
 }
 
 write_units() {
@@ -1496,7 +1543,7 @@ menu_setup_foreign() {
   if state_valid "$idx"; then
     warn "$(t foreign.already "$idx"):"
     info "  iran  : $(state_get "$idx" IRAN_IP 2>/dev/null || echo '?')"
-    info "  lanes : $(state_lanes "$idx" | tr '\n' ' ')"
+    [[ $ADVANCED_STATUS == 1 ]] && info "  internal lanes: $(state_lanes "$idx" | tr '\n' ' ')"
     info "  xray  : $(state_inbound "$idx")"
     if ! confirm "$(t foreign.reoverwrite "$idx")"; then
       info "$(t foreign.unchanged)"
@@ -1514,6 +1561,9 @@ menu_setup_foreign() {
   fi
 
   inbound=$SC_INBOUND
+  if [[ $inbound == 0 ]]; then
+    ask_port inbound "Existing Xray inbound port on this foreign server"
+  fi
   sshport=$SC_SSH_PORT
   lane_arr=("${SC_LANES[@]}")
   lanes="${lane_arr[*]}"
@@ -1523,18 +1573,15 @@ menu_setup_foreign() {
   info "  iran ip      : $ip:$sshport"
   info "  frontend     : $SC_FRONTEND (on Iran)"
   info "  xray inbound : $inbound (here, read-only - not modified)"
-  info "  lane ports   : $lanes (allocated by Iran)"
+  info "  internal SSH lanes: allocated automatically"
+  [[ $ADVANCED_STATUS == 1 ]] && info "  internal lane ports: $lanes"
   hr
 
-  # Verify the Xray inbound exists. We only listen for it; never configure it.
-  if local_listening "$inbound"; then
-    ok "$(t foreign.xray_ok "$inbound")"
-  else
-    warn "$(t foreign.xray_missing "$inbound")"
-    if ! confirm "$(t foreign.continue_anyway)"; then
-      err "aborted; Xray was not touched"
-      return 1
-    fi
+  # Manager/node synchronization can create the inbound shortly after setup.
+  # Wait for actual socket reachability rather than trusting process state.
+  if ! wait_for_local_listener "$inbound"; then
+    err "aborted before SSH/HAProxy changes; Xray and existing users were untouched"
+    return 1
   fi
 
   if ! confirm "$(t foreign.confirm_apply)"; then
@@ -1584,6 +1631,12 @@ menu_setup_foreign() {
     close_admin_connection "root@$ip"
     return 1
   fi
+  if ! tcp_forward_healthy "$ip" "$SC_FRONTEND"; then
+    err "the public frontend accepts TCP but the end-to-end forward closes immediately"
+    close_admin_connection "root@$ip"
+    return 1
+  fi
+  ok "end-to-end public TCP forwarding verified"
   local ws_path=''
   if ws_path=$(detect_local_ws_path "$inbound"); then
     if ! verify_public_websocket "$ip" "$SC_FRONTEND" "$ws_path"; then
@@ -1644,7 +1697,7 @@ lane_state() {
 }
 
 show_foreign_status() {
-  local idx=$1 frontend inbound j lanes_ready=1 svc
+  local idx=$1 frontend inbound j lanes_ready=1 svc role
 
   info "Foreign #$idx"
   if ! state_valid "$idx"; then
@@ -1655,11 +1708,21 @@ show_foreign_status() {
 
   frontend=$(state_frontend "$idx")
   inbound=$(state_inbound "$idx")
+  role=$(get_role)
 
-  printf '  Frontend: %s:%s\n' "0.0.0.0" "$frontend"
-  printf '  Xray destination: 127.0.0.1:%s\n' "$inbound"
+  if [[ $role == iran ]]; then
+    printf '  Public Tunnel Port: %s\n' "$frontend"
+    if [[ $inbound == 0 ]]; then
+      printf '  Foreign Xray Inbound Port: configured on foreign server\n'
+    else
+      printf '  Foreign Xray Inbound Port: %s\n' "$inbound"
+    fi
+  else
+    printf '  Iran Tunnel Endpoint: %s:%s\n' "$(state_get "$idx" IRAN_IP 2>/dev/null || echo '?')" "$frontend"
+    printf '  Local Xray Inbound Port: %s\n' "$inbound"
+  fi
 
-  if [[ $(get_role) == iran ]]; then
+  if [[ $role == iran ]]; then
     if port_in_use "$frontend"; then
       printf '  Frontend listener: %sUP%s\n' "$C_GREEN" "$C_RESET"
     else
@@ -1668,16 +1731,18 @@ show_foreign_status() {
   fi
 
   for j in 1 2 3 4; do
-    lane_state "$idx" "$j"
     svc="$APP-f$idx-lane$j.service"
-    if [[ $(get_role) == iran ]]; then
-      :
+    if [[ $role == iran ]]; then
+      local lane
+      lane=$(state_get "$idx" "LANE$j")
+      local_listening "$lane" && tcp_forward_healthy 127.0.0.1 "$lane" || lanes_ready=0
     elif [[ $(systemctl_is_active "$svc") != active ]]; then
       lanes_ready=0
     fi
+    if [[ $ADVANCED_STATUS == 1 ]]; then lane_state "$idx" "$j"; fi
   done
 
-  if [[ $(get_role) == iran ]]; then
+  if [[ $role == iran ]]; then
     if haproxy_active; then
       printf '  HAProxy: %sHEALTHY%s (%s)\n' "$C_GREEN" "$C_RESET" "$(systemctl_is_active haproxy)"
     else
@@ -1700,9 +1765,9 @@ show_foreign_status() {
   fi
 
   if (( lanes_ready )); then
-    printf '  Overall: %sREADY%s\n' "$C_GREEN" "$C_RESET"
+    printf '  Tunnel Status: %sREADY%s\n' "$C_GREEN" "$C_RESET"
   else
-    printf '  Overall: %sDEGRADED%s\n' "$C_YELLOW" "$C_RESET"
+    printf '  Tunnel Status: %sDEGRADED%s\n' "$C_YELLOW" "$C_RESET"
   fi
   return 0
 }
