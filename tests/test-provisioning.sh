@@ -59,10 +59,15 @@ pair_id=$(awk -F= '$1=="PAIR_ID"{print $2}' <<<"$decoded")
 pair_hash=$(awk -F= '$1=="PAIR_CONFIG_HASH"{print $2}' <<<"$decoded")
 assert_contains "$(cat "$SSH_DIR/authorized_keys")" "command=\"$SCRIPT --pair-enroll $pair_id\",restrict" "temporary key is restricted to the pairing handler"
 pub64=$(base64 <"$SSH_DIR/starspeed-tunnel_f1.pub" | tr -d '\n')
-if SSH_ORIGINAL_COMMAND="enroll $pair_hash $pub64" bash -c 'source "$1" --help >/dev/null; pair_enroll_handler "$2"' _ "$SCRIPT" "$pair_id" >/dev/null 2>&1; then
-  t_ok "first enrollment succeeds"
+if out=$(TMPDIR="$SANDBOX" SSH_ORIGINAL_COMMAND="enroll $pair_hash $pub64" "$SCRIPT" --pair-enroll "$pair_id" 2>&1); then
+  assert_contains "$out" "PAIRING_OK" "CLI enrollment succeeds without an unbound tmp variable"
 else
-  t_fail "first enrollment succeeds"
+  t_fail "CLI enrollment succeeds without an unbound tmp variable" "$out"
+fi
+if compgen -G "$SANDBOX/starspeed-tunnel.pub.*" >/dev/null; then
+  t_fail "pairing temporary file is removed after CLI return"
+else
+  t_ok "pairing temporary file is removed after CLI return"
 fi
 assert_contains "$(cat "$SSH_DIR/authorized_keys")" 'permitlisten="127.0.0.1:46101"' "lane key is limited to its allocated reverse port"
 if SSH_ORIGINAL_COMMAND="enroll $pair_hash $pub64" bash -c 'source "$1" --help >/dev/null; pair_enroll_handler "$2"' _ "$SCRIPT" "$pair_id" >/dev/null 2>&1; then
@@ -76,6 +81,21 @@ if SSH_ORIGINAL_COMMAND="enroll $pair_hash $other64" bash -c 'source "$1" --help
   t_fail "replay with a different key is rejected"
 else
   t_ok "replay with a different key is rejected"
+fi
+if SSH_ORIGINAL_COMMAND="ack $pair_hash $pub64" "$SCRIPT" --pair-enroll "$pair_id" >/dev/null 2>&1 &&
+   ! SSH_ORIGINAL_COMMAND="enroll $pair_hash $pub64" "$SCRIPT" --pair-enroll "$pair_id" >/dev/null 2>&1; then
+  t_ok "consumed pairing code cannot enroll again; a new code is required"
+else
+  t_fail "consumed pairing code cannot enroll again; a new code is required"
+fi
+code=$(bash -c 'source "$1" --help >/dev/null; emit_setup_code 1' _ "$SCRIPT")
+expired_id=$(printf '%s' "$code" | base64 -d | awk -F= '$1=="PAIR_ID"{print $2}')
+expired_hash=$(printf '%s' "$code" | base64 -d | awk -F= '$1=="PAIR_CONFIG_HASH"{print $2}')
+sed -i 's/^EXPIRY=.*/EXPIRY=1000000000/' "$BASE/pairings/$expired_id.env"
+if ! SSH_ORIGINAL_COMMAND="enroll $expired_hash $pub64" "$SCRIPT" --pair-enroll "$expired_id" >/dev/null 2>&1; then
+  t_ok "expired pairing code is rejected; a new code is required"
+else
+  t_fail "expired pairing code is rejected; a new code is required"
 fi
 
 t_start "partial lane startup failure does not restart another node"

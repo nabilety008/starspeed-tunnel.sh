@@ -1260,13 +1260,14 @@ menu_authorize_key() {
 ssh_key_path() { printf '%s/%s_f%s' "$SST_SSH_DIR" "$APP" "$1"; }
 known_hosts_path() { printf '%s/%s_iran%s' "$SST_SSH_DIR" "$APP" "$1"; }
 
-pair_enroll_handler() {
-  local id=$1 meta="$PAIR_DIR/$1.env" used="$PAIR_DIR/$1.used" cmd action hash payload tmp pub blob keyhash auth j opts lock
+pair_enroll_handler() (
+  local id=$1 meta="$PAIR_DIR/$1.env" used="$PAIR_DIR/$1.used" cmd action hash payload tmp='' pub blob keyhash auth j opts lock='' lock_path
+  trap '[[ -z $tmp ]] || rm -f -- "$tmp"; [[ -z $lock ]] || rmdir "$lock" 2>/dev/null || true' EXIT
   [[ $id =~ ^[a-f0-9]{24}$ && -r $meta ]] || die "invalid or expired pairing"
   cmd=${SSH_ORIGINAL_COMMAND:-}; read -r action hash payload <<<"$cmd"
   [[ $hash == "$(awk -F= '$1=="CONFIG_HASH"{print $2}' "$meta")" ]] || die "pairing configuration mismatch"
   (( $(date +%s) <= $(awk -F= '$1=="EXPIRY"{print $2}' "$meta") )) || die "pairing expired"
-  tmp=$(mktemp "${TMPDIR:-/tmp}/$APP.pub.XXXXXX"); trap 'rm -f -- "$tmp"' RETURN
+  tmp=$(mktemp "${TMPDIR:-/tmp}/$APP.pub.XXXXXX") || die "could not create pairing temporary file"
   printf '%s' "$payload" | base64 -d >"$tmp" 2>/dev/null || die "invalid enrollment payload"
   pub=$(cat "$tmp"); valid_pubkey "$pub" || die "invalid lane public key"
   blob=$(awk '{print $2}' "$tmp"); keyhash=$(printf '%s' "$blob" | sha256sum | awk '{print $1}')
@@ -1291,9 +1292,9 @@ pair_enroll_handler() {
     [[ $(cat "$used") == "$keyhash" ]] || die "pairing code already used"
     info "PAIRING_OK"; return 0
   fi
-  lock="$PAIR_DIR/$id.lock"
-  mkdir "$lock" 2>/dev/null || die "pairing is busy; retry safely"
-  trap 'rm -f -- "$tmp"; rmdir "$lock" 2>/dev/null || true' RETURN
+  lock_path="$PAIR_DIR/$id.lock"
+  mkdir "$lock_path" 2>/dev/null || die "pairing is busy; retry safely"
+  lock=$lock_path
   if [[ -r $used ]]; then
     [[ $(cat "$used") == "$keyhash" ]] || die "pairing code already used"
     info "PAIRING_OK"; return 0
@@ -1303,7 +1304,7 @@ pair_enroll_handler() {
   awk -v b="$blob" '{for(i=1;i<=NF;i++) if($i==b) found=1} END{exit !found}' "$auth" || printf '%s %s\n' "$opts" "$pub" >>"$auth"
   printf '%s\n' "$keyhash" >"$used"; chmod 600 "$used" "$auth"
   info "PAIRING_OK"
-}
+)
 
 pairing_known_hosts() {
   local idx=$1 host=$2 port=$3 kh tmp fps
@@ -2408,7 +2409,7 @@ main() {
     --version|-V) printf '%s %s\n' "$APP" "$VERSION"; return 0 ;;
     --role)       get_role; return 0 ;;
     --pair-enroll)
-      [[ $EUID -eq 0 ]] || die "pairing handler requires root"
+      require_root
       pair_enroll_handler "${2:-}"
       return $?
       ;;
